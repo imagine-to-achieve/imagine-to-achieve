@@ -1,11 +1,22 @@
-# 🎯 Achieve What You Imagined: Learning to Align Actions with Visual Plans
+<h1 align="center">🎯 Achieve What You Imagined:<br>Learning to Align Actions with Visual Plans</h1>
 
-**Anonymous submission — ICRA 2027**
+<p align="center">
+  Anonymous Authors
+</p>
 
-[📄 Paper](https://imagine-to-achieve.github.io/paper/anonymous-paper.pdf) &nbsp;|&nbsp;
-[🌐 Project page](https://imagine-to-achieve.github.io/) &nbsp;|&nbsp;
-[🎬 Video overview](https://imagine-to-achieve.github.io/#video) &nbsp;|&nbsp;
-[🤖 Real-robot demos](https://imagine-to-achieve.github.io/#demos)
+<p align="center">
+  <i>Affiliations withheld for double-blind review</i>
+</p>
+
+<p align="center">
+  ICRA 2027
+</p>
+
+<p align="center">
+  <a href="https://imagine-to-achieve.github.io/paper/anonymous-paper.pdf"><img src="https://img.shields.io/badge/Paper-PDF-b31b1b" alt="Paper"></a>
+  <a href="https://imagine-to-achieve.github.io/"><img src="https://img.shields.io/badge/Project-Page-2ea44f" alt="Project Page"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache--2.0-555555" alt="License"></a>
+</p>
 
 This repository is the standalone training runtime for the paper. It implements critic-free
 **Flow Policy Optimization (FPO)** on the action head of a world-action model, using a **frozen**
