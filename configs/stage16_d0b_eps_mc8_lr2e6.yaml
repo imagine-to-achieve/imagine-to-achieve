@@ -1,0 +1,218 @@
+# Production red-only Duck: 8 nodes x 4 GPUs, 128 trajectories/update, 32-trajectory minibatch, 10 updates.
+schema_version: 1
+experiment_name: stage16_d0b_eps_mc8_lr2e6
+runtime:
+  backend: ray_fsdp
+  seed: 42
+  dtype: bfloat16
+  max_updates: 1
+  segment_updates: 1
+  continuous_stress: false
+  output_dir: /path/to/rlinf_release/outputs/stage16_d0b_eps_mc8_lr2e6
+  resume: false
+  require_real_assets: true
+  deterministic: true
+  minimum_free_disk_gib: 120
+  minimum_free_inodes: 0  # inode gate disabled: not enforced on this filesystem.
+  max_gpu_reserved_fraction: 0.9
+slurm:
+  account: <SLURM_ACCOUNT>
+  partition: gpu
+  nodes: 8
+  gpus_per_node: 4
+  ntasks_per_node: 1
+  cpus_per_task: 32
+  memory: 400G
+  time_limit: "24:00:00"
+  signal_seconds: 300
+batch:
+  parallel_envs: 128
+  rollout_epochs: 1
+  trajectories_per_update: 128
+  chunks_per_trajectory: 5
+  global_minibatch_chunks: 160
+  micro_batch_size_per_gpu: 1
+  gradient_accumulation_steps: 5
+  expected_optimizer_steps: 4
+  logical_rounds_per_update: 1
+  group_slots_per_logical_round: 8
+  waves_per_logical_round: 1
+task:
+  profile: duck
+  mode: single_task
+  base_prompt: Pick up the duck and put it into the black box.
+  allowed_variants: [brown, red, white, yellow]
+  active_variants: [red]
+  train_episodes_per_variant: 40
+  eval_episodes_per_variant: 10
+  append_viewpoint_info: true
+  append_duration_fps: true
+  append_resolution_info: true
+  rollout_cfg_dropout_rate: 0.0
+  camera_labels: [main, wrist, extra]
+  split_manifest_path: /path/to/rlinf_release/configs/duck_split_manifest.json
+  variant_prompts:
+    brown: Pick up the brown duck and put it into the black box.
+    red: Pick up the red duck and put it into the black box.
+    white: Pick up the white duck and put it into the black box.
+    yellow: Pick up the yellow duck and put it into the black box.
+algorithm:
+  name: fpo_grpo
+  advantage: grpo_action_suffix
+  group_size: 16
+  gamma: 0.95
+  gae_lambda: null  # GRPO suffix recursion intentionally does not use GAE.
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.2
+  normalize_advantages: true
+  logprob_level: chunk
+trajectory_records:
+  enabled: true
+  mode: lightweight_analysis
+  auto_analyze: false
+  require_plots: false
+fpo:
+  replay_objective: fpo_action_head
+  ratio_granularity: per_mc
+  score_parameterization: epsilon
+  num_mc_samples: 8
+  time_distribution: waver
+  training_shift: 10.0
+  timestep_scale: 1000.0
+  vision_state_channels: 48
+  vision_condition_latent_frames: 1
+  latent_downsample_factor: 16
+  freeze_video_path: true
+  train_action_path_only: true
+optimizer:
+  name: AdamW
+  lr: 0.000002
+  beta1: 0.9
+  beta2: 0.95
+  eps: 0.00000001
+  weight_decay: 0.01
+  clip_grad_norm: 5.0
+cosmos:
+  framework_version: 1.2.2
+  data_parallel_shard_degree: 4
+  checkpoint_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_duck_0731_4color_160train_40val_15k/checkpoints/iter_000010000/model
+  checkpoint_config_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_duck_0731_4color_160train_40val_15k/config.yaml
+  action_stats_path: /path/to/workspace/check-point/cosmos3_new/action_stats/action_policy_ur5_eef_duck_0731_4color_160train_40val_15k_action_stats.json
+  vlm_processor_path: /path/to/workspace/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+  checkpoint_target_rewrite: true
+  strict_load: true
+  action_dim: 10
+  max_action_dim: 64
+  action_representation: ur5_eef_relative_10d_droid_native
+  action_normalization: qnorm
+  action_chunk: 32
+  action_fps: 15.0
+  sampler: unipc
+  sampler_steps: 15
+  guidance: 1.0
+  resolution_tier: 720
+ctrl_world:
+  architecture:
+    sample_size: null
+    in_channels: 8
+    out_channels: 4
+    down_block_types: [CrossAttnDownBlockSpatioTemporal, CrossAttnDownBlockSpatioTemporal, CrossAttnDownBlockSpatioTemporal, DownBlockSpatioTemporal]
+    up_block_types: [UpBlockSpatioTemporal, CrossAttnUpBlockSpatioTemporal, CrossAttnUpBlockSpatioTemporal, CrossAttnUpBlockSpatioTemporal]
+    block_out_channels: [320, 640, 1280, 1280]
+    addition_time_embed_dim: 256
+    projection_class_embeddings_input_dim: 768
+    layers_per_block: 2
+    cross_attention_dim: 1024
+    transformer_layers_per_block: 1
+    num_attention_heads: [5, 10, 20, 20]
+    num_frames: 25
+  runtime:
+    action_dim: 7
+    policy_action_dim: 10
+    num_history: 6
+    action_encoder_hidden_size: 1024
+    text_cond: true
+    frame_level_cond: true
+    his_cond_zero: false
+    policy_chunk: 32
+    policy_action_fps: 15.0
+    condition_fps: 30.0
+    resample_actions: true
+    resampled_chunk: 64
+    internal_rollout: true
+    window_frames: 5
+    window_emit_frames: 4
+    use_lookahead_latent: true
+    history_mode: sparse_window
+    history_indices: [0, 0, -12, -9, -6, -3]
+    history_bank_size: 24
+    num_inference_steps: 20
+    guidance_scale: 1.0
+    decode_chunk_size: 7
+    per_view_image_size: [192, 320]
+    per_view_vae_codec: true
+    action_to_eef_adapter: analytic_ur5_rot6d
+reward:
+  source: ctrl_world_aligned_mse_plus_terminal
+  video_similarity:
+    enabled: true
+    metric: negative_mse
+    alignment_mode: per_chunk
+    camera_layout: droid
+    size: [192, 320]
+    range_policy: zero_one
+    scale: 0.0
+  terminal_goal:
+    enabled: true
+    same_episode: true
+    frame_index: -1
+    window_size: 4
+    size: [192, 320]
+    range_policy: zero_one
+    view_weights: [0.6666666666666666, 0.16666666666666666, 0.16666666666666666]
+    scale: 160.0
+  success_classifier:
+    enabled: true
+    diagnostic_only: true
+    replace_training_reward: false
+    threshold: 0.5
+    aggregation: mean
+assets:
+  legacy_config_name: ctrl_world_duck4color_grpo_cosmos_fpo_native_unipc_b512_cosmos_split_v2
+  dataset_path: /path/to/shared/datasets/duck_0731
+  ctrl_world_checkpoint: /path/to/workspace/ctrl-world-train/model_ckpt/ctrl_world_duck0731_3cam_native30fps_finetune_10k/weights-100000.pt
+  ctrl_world_stats: /path/to/workspace/ctrl-world-train/dataset_meta_info/ctrl_world_duck_0731_3cam/stat.json
+  svd_model_path: /path/to/workspace/Ctrl-World/checkpoints/pre_trained/stable-video-diffusion-img2vid
+  clip_model_path: /path/to/workspace/Ctrl-World/checkpoints/pre_trained/clip-vit-base-patch32
+  reward_models:
+    red: /path/to/workspace/reward_model/outputs/duck_0731_resnet_main_red/resnet_rm.pth
+  expected_sha256:
+    cosmos_checkpoint: adf07c9dcd73e7881f92134b050f84744709f3766efb6441136ad447981b55bb
+    cosmos_checkpoint_config: 713003ec114aad3c7b80d19aaa36799b832b72ee6d233551d37cb877701f4b33
+    cosmos_action_stats: 90b46e45fa3851f4cbe625cd1c5f484ada70791913f89805ddfc9a6ee191b438
+    ctrl_world_checkpoint: 412a3f52defd6648afe1d9107d027c1d9ff3f662bd33beff7588bef874bbbd45
+    ctrl_world_stats: f7a0081ee1ae71e6add49bf3216fa2a4eff008e6d32abf9b25088d9e1ee384db
+    reward_model_red: a4073af8d87a12d871b3c5df24a5d11a646dbdbe01eea83479ca094296135dc7
+distributed:
+  backend: ray_fsdp
+  ray_object_store_bytes: 68719476736
+  ray_ready_timeout_seconds: 600
+  collective_timeout_seconds: 180
+  heartbeat_interval_seconds: 10
+  actor_offload: true
+  rollout_offload: true
+  replay_cpu_resident: true
+  activation_checkpointing: full
+  fsdp_use_orig_params: true
+evaluation:
+  enabled: true
+  interval_updates: 1
+  episodes_per_variant: 10
+  save_video: false
+checkpoint:
+  enabled: false
+  interval_updates: 1
+  keep_latest: 1
+  atomic: true
+  save_optimizer: true
+  emergency_on_signal: true

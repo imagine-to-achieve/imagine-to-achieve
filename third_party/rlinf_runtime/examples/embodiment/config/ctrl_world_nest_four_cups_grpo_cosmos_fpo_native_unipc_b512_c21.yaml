@@ -1,0 +1,49 @@
+defaults:
+  - ctrl_world_nest_four_cups_grpo_cosmos_fpo_native_unipc_b512
+  - _self_
+
+# 21-chunk continuation of the validated nest-four-cups contract. The parent
+# retains all asset, reward, camera, split, and optimizer settings; only the
+# horizon, minibatch, run identity, and per-update best-MSE video are changed.
+runner:
+  logger:
+    experiment_name: nest_four_cups_b512_c21_32n4g_u50_gs1
+
+algorithm:
+  trajectory_chunks: 21
+  trajectory_records:
+    split_manifest: /path/to/rlinf_release/configs/nest_four_cups_split_manifest_c21.json
+    trajectory_frames: 672
+  cross_rank_group:
+    chunks_per_trajectory: 21
+
+env:
+  train:
+    max_episode_steps: 672
+    max_steps_per_rollout_epoch: 672
+    episode_manifest_path: ${algorithm.trajectory_records.split_manifest}
+    video_cfg:
+      save_best_rollout: true
+      best_rollout_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos/train/best_mse
+      video_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos/train
+      fps: 15
+  eval:
+    max_episode_steps: 672
+    max_steps_per_rollout_epoch: 672
+    episode_manifest_path: ${algorithm.trajectory_records.split_manifest}
+
+actor:
+  global_batch_size: 2688
+
+exp:
+  training:
+    max_episode_steps: 672
+    max_steps_per_rollout_epoch: 672
+  evaluation:
+    max_episode_steps: 672
+    max_steps_per_rollout_epoch: 672
+  optim:
+    global_batch_size: 2688
+
+duck:
+  split_manifest: ${algorithm.trajectory_records.split_manifest}

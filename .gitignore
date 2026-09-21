@@ -1,0 +1,35 @@
+# Pinned environment built by scripts/create_env.sh
+.venv_aarch64/
+.venv*/
+
+# Run outputs: checkpoints, metrics, analysis, figures
+outputs/
+analysis/*/
+*.png
+*.pdf
+*.dat
+
+# Model weights and data — never committed
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.npy
+*.npz
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+
+# Slurm
+slurm-*.out
+*.err
+
+# OS
+.DS_Store
+Thumbs.db

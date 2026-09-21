@@ -1,0 +1,19 @@
+defaults:
+  - ctrl_world_duck4color_grpo_cosmos_fpo_native_unipc_b512_cosmos_split_v2_eval_extremes
+  - _self_
+
+# The side-view classifiers were trained on d405_1_rgb. Keep both the
+# physical camera key and the Ctrl-World view slot explicit and audited.
+env:
+  train:
+    ctrl_world_cfg:
+      reward_model:
+        camera_key: observation.images.d405_1_rgb
+        ctrl_world_view_index: 2
+        require_camera_metadata: true
+  eval:
+    ctrl_world_cfg:
+      reward_model:
+        camera_key: observation.images.d405_1_rgb
+        ctrl_world_view_index: 2
+        require_camera_metadata: true

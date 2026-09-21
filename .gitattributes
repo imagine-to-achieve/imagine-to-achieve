@@ -1,0 +1,20 @@
+# Normalize to LF in the repository regardless of the committer's platform.
+# The sbatch and shell entry points run on a Linux cluster and break with CRLF.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.gp   text eol=lf
+*.py   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.cfg  text eol=lf
+*.toml text eol=lf
+slurm/*.sbatch          text eol=lf
+stage15_plugin/*.sbatch text eol=lf
+
+*.png  binary
+*.pdf  binary
+*.webp binary

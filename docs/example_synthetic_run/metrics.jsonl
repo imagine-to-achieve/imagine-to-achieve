@@ -1,0 +1,2 @@
+{"approx_kl": -4.756450653076172e-06, "clip_fraction": 0.0, "grad_norm": 0.0867234393954277, "optimizer_steps": 4.0, "policy_loss": 1.1742115020751953e-06, "ratio": 1.000004768371582, "ratio_abs": 5.9247016906738285e-06, "update": 1.0}
+{"approx_kl": 1.6570091247558594e-06, "clip_fraction": 0.0, "grad_norm": 0.07973042875528336, "optimizer_steps": 4.0, "policy_loss": -4.82797622680664e-07, "ratio": 0.9999983191490174, "ratio_abs": 4.065036773681641e-06, "update": 2.0}

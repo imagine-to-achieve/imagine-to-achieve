@@ -1,0 +1,51 @@
+model_type: "cosmos"
+
+model_path: null
+precision: null
+
+num_action_chunks: 10
+action_dim: 7
+
+is_lora: False
+lora_rank: 32
+add_value_head: False
+
+cosmos:
+  backend: "native"
+  training_mode: "action_only_grpo"
+  framework_path: null
+  checkpoint_path: null
+  checkpoint_name: null
+  action_representation: "libero_delta_eef_7d"
+  domain_name: null
+  prompt: "Predict the next robot action chunk from the current observation."
+  raw_action_dim: null
+  action_chunk_size: null
+  max_action_dim: null
+  num_steps: 20
+  guidance: 1.0
+  fps: 5
+  # Independent initial action latent noise for each local GRPO member,
+  # with a deterministic but different stream for every policy call/chunk.
+  seed: ${oc.env:COSMOS3_SAMPLING_SEED,42}
+  group_member_seed_stride: ${oc.env:COSMOS3_GROUP_MEMBER_SEED_STRIDE,1}
+  sampling_call_seed_stride: ${oc.env:COSMOS3_SAMPLING_CALL_SEED_STRIDE,1000}
+  sampler: "unipc"
+  output_dir: "logs/cosmos_native_inference_smoke_output"
+  input_audit: false
+  artifacts:
+    enabled: false
+    output_dir: "logs/cosmos_artifacts"
+    save_replay_tensors: true
+    max_episodes: 2
+    max_chunks: 4
+  action_stats_path: null
+  action_normalization: "auto"
+  guardrails: True
+  offload_guardrail_models: False
+  allow_guardrail_download: False
+  vlm_processor_from_checkpoint: True
+  require_slurm_gpu: True
+  video_similarity_size: [192, 320]
+  freeze_video_path: True
+  train_action_path_only: True

@@ -1,0 +1,424 @@
+defaults:
+  - ctrl_world_close_laptop_grpo_cosmos_self_feedback
+  - _self_
+
+# Production configuration for the 512-trajectory Native UniPC run.
+cluster:
+  num_nodes: ${oc.decode:${oc.env:NUM_NODES,8}}
+
+runner:
+  logger:
+    log_path: /path/to/workspace/github/rlinf-cosmos3-ctrl-world/logs
+    experiment_name: cosmos_self_ctrlworld_native_unipc_qnorm_c32_rerun2_iter500_g16_8groups_x4_mb128_4upd_gs1_seed42_last4_1to1_24h
+    logger_backends: [tensorboard]
+  max_epochs: 50
+  max_steps: 50
+  val_check_interval: -1
+  # Formal jobs deliberately end every five updates. Save the exact-resume DCP
+  # only at that segment boundary so checkpoint staging cannot accumulate
+  # inside the fresh five-update Ray/CUDA process.
+  save_interval: 5
+  checkpoint_milestone_interval: 5
+  checkpoint_keep_latest_recovery: 1
+  rollout_only: false
+  only_eval: false
+  status_file: ${runner.logger.log_path}/${runner.logger.experiment_name}/status.json
+  success_file: ${runner.logger.log_path}/${runner.logger.experiment_name}/SUCCESS
+  walltime_seconds: 86400
+  allocation_start_epoch: ${oc.decode:${oc.env:RLINF_ALLOCATION_START_EPOCH,0}}
+  min_remaining_before_update_seconds: 5400
+  # A Native replay trajectory contains the saved action/vision latent chain.
+  # Route only the Actor channel through one replica per node so 32 large
+  # payloads are never buffered by a single rank-0 ChannelWorker.
+  actor_channel:
+    distributed: true
+    route_by_node: true
+    maxsize: 0
+  first_update_smoke:
+    enabled: true
+    max_peak_memory_fraction: 0.9
+    expected_optimizer_steps_per_update: 4
+    required_actor_metrics:
+      - actor/total_loss
+      - actor/grad_norm
+      - action/ratio_mean
+      - actor/optimizer_steps_per_update
+      - hardware/gpu_peak_reserved_fraction_max
+  csv_metrics:
+    enabled: true
+
+algorithm:
+  group_size: 16
+  rollout_epoch: ${oc.decode:${oc.env:ROLLOUT_EPOCH,4}}
+  update_epoch: 1
+  adv_type: grpo_action_suffix
+  gamma: 0.95
+  reward_type: chunk_level
+  logprob_type: action_level
+  normalize_advantages: true
+  filter_rewards: false
+  kl_beta: 0.0
+  entropy_bonus: 0.0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_log_ratio_min: -20.0
+  clip_log_ratio_max: 20.0
+  loss_agg_func: token-mean
+  trajectory_aware_minibatches: true
+  trajectory_chunks: 5
+  expected_optimizer_steps_per_update: 4
+  rollout_retry:
+    max_retries: 1
+    reuse_semantic_seed: true
+  trajectory_records:
+    enabled: true
+    output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/trajectory_records
+    expected_trajectories: 512
+    trajectory_frames: 160
+    checkpoint_checksum_manifest: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/checkpoint_checksums.json
+    input_audit: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/input_audit.json
+    run_manifest: ${runner.logger.log_path}/${runner.logger.experiment_name}/run_manifest.json
+    terminal_goal_metadata: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/terminal_goal_reference/metadata.json
+    seed_manifest_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/seed_manifests
+  cross_rank_group:
+    enabled: true
+    members_per_rank: 4
+    rank_layout: contiguous
+    gather_backend: actor_world
+    seed_base: 42
+    per_member_vision_seed: true
+    semantic_topology_v2: true
+    logical_rounds_per_update: 4
+    group_slots_per_logical_round: 8
+    waves_per_logical_round: ${oc.decode:${oc.env:WAVES_PER_LOGICAL_ROUND,1}}
+    chunks_per_trajectory: 5
+    expected_trajectories_per_update: 512
+    reset_episode_min: 5
+    reset_episode_max: 39
+    fixed_ctrl_seed: 42
+    seed_derivation_version: blake2b-int63-v2
+
+env:
+  train:
+    total_num_envs: ${oc.decode:${oc.env:TOTAL_ENVS,128}}
+    group_size: 4
+    max_episode_steps: 160
+    max_steps_per_rollout_epoch: 160
+    exclude_reset_ids: [0, 1, 2, 3, 4]
+    use_ordered_reset_state_ids: false
+    random_reset_state_ids: false
+    auto_reset: false
+    ignore_terminations: true
+    # Match the proven collocated Cosmos/Ctrl-World lifecycle: keep only the
+    # model used by the active phase resident on GPU.
+    enable_offload: true
+    video_cfg:
+      # Persist every Cosmos-vs-Ctrl-World trajectory directly through one
+      # synchronous x264 pipe per local env. This replaces all full-episode
+      # frame buffers, including the previous best/worst candidate buffers.
+      save_video: false
+      save_all_trajectories: false
+      stream_all_cosmos_comparison: true
+      stream_comparison_encoder_threads: 1
+      stream_comparison_subdir: cosmos_vs_ctrlworld_all
+      save_best_rollout: false
+      save_worst_rollout: false
+      camera_layout: droid
+      fps: 30
+      video_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos
+    ctrl_world_cfg: &close_laptop_ctrl_world_runtime
+      num_inference_steps: 20
+      decode_chunk_size: 7
+      policy_image_size: [192, 320]
+      image_size: [192, 320]
+      # Cosmos reset input only: preserve the original 480x640 dataset views.
+      # Ctrl-World remains at 192x320; later policy inputs are Cosmos's own
+      # 720x640 self-feedback composites, never Ctrl-World output frames.
+      use_raw_reset_policy_views: true
+      # Match the proven user rollout path: each physical camera is encoded
+      # independently by Ctrl-World and the task text is fixed for this run.
+      per_view_vae_codec: true
+      prompt_override: close the laptop
+      chunk: 32
+      fps: 30
+      cosmos_action_fps: 15
+      ctrl_condition_fps: 30
+      action_fps_resample: true
+      ctrl_world_internal_rollout: true
+      ctrl_world_window_frames: 5
+      ctrl_world_window_emit_frames: 4
+      ctrl_world_window_use_lookahead_latent: true
+      ctrl_world_window_history_mode: sparse_window
+      action_to_eef_adapter: analytic_ur5_rot6d
+      adapter_translation_gain: 1.0
+      adapter_rotation_gain: 1.0
+      adapter_translation_frame: body
+      adapter_translation_sign: 1.0
+      adapter_rotation_mode: body
+      policy_gripper_type: passthrough
+      adapter_gripper_hard_clamp: true
+      adapter_gripper_hard_mode: clip_only
+      # Canonical Ctrl-World names: main=D405_0 (view 0), wrist=D435
+      # (view 2), extra=D405_1 (view 1).  The droid Cosmos layout places
+      # D435 on top, so its pixel areas implement the requested 2/3,1/6,1/6
+      # trajectory weighting.
+      main_view_index: 0
+      wrist_view_index: 2
+      fixed_denoise_seed: 42
+      rollout_retry_max_retries: 1
+      common_random_numbers_within_group: true
+      common_noise_seed: 42
+      # Native joint video/action diffusion uses the same member-specific
+      # initial Gaussian seed for both modalities. Keep the environment's
+      # metadata validator on the exact same setting as the collector.
+      per_member_vision_seed: ${algorithm.cross_rank_group.per_member_vision_seed}
+      reward_model_diagnostic_only: true
+      reward_model: ${reward.success_model}
+  eval:
+    total_num_envs: 0
+    # Train and eval drive the same Ctrl-World/Cosmos policy contract. YAML
+    # merge makes production-only changes atomic across both modes while the
+    # parent config still supplies evaluation-only reset IDs and video flags.
+    ctrl_world_cfg:
+      <<: *close_laptop_ctrl_world_runtime
+
+rollout:
+  enable_offload: true
+  collect_prev_infos: true
+  collect_transitions: false
+  # Actor and Rollout are separate processes collocated on each GPU. The
+  # default CUDA IPC path retained roughly 119 GiB of shared weight mappings
+  # per node after update 0 in job 753375. Stream full-weight synchronization
+  # one tensor at a time through CPU/Gloo so update 1 starts from the same host
+  # memory baseline instead of accumulating another IPC generation.
+  sync_weight_disable_same_device_ipc: true
+  # Cosmos video is consumed locally for self-feedback/reward before the
+  # trajectory is sent to the actor. Ctrl-World video is reward-only. Neither
+  # belongs in the Native action-logprob replay payload.
+  retain_video_payload_in_actor_batch: false
+
+actor:
+  enable_offload: true
+  # Five-update production segments deliberately use the exact actor residency
+  # path proven for 11 consecutive updates by job 767180. Fresh Ray/CUDA
+  # processes bound its cross-update accumulation before the historical OOM.
+  optimizer_state_cpu_during_backward: false
+  rollout_batch_cpu_resident: false
+  # DCP already contains model, optimizer, scheduler, RNG, and step state.
+  # Avoid the redundant 11 GiB model_state_dict/full_weights.pt export.
+  save_full_model_weights: false
+  micro_batch_size: 1
+  global_batch_size: 640
+  seed: 42
+  model:
+    model_path: /path/to/workspace/cosmos3_model/train_cosmos/outputs/cosmos3_action/action_sft_ur5_position_focus/action_policy_ur5_eef_close_desktop_rel10d_droid_qnorm_c32_fps15_r720_vw10_aw1_b4_10traj_ep0to9_500_rerun2_20260801/checkpoints/iter_000000500/model
+    num_action_chunks: 32
+    action_dim: 10
+    num_steps: 15
+    precision: bf16
+    cosmos:
+      backend: native
+      sampler: unipc
+      sampler_family: ODE
+      surrogate_likelihood_label: unipc_euler_surrogate
+      framework_path: /path/to/workspace/github/cosmos-framework-pinned-f358a625
+      checkpoint_path: /path/to/workspace/cosmos3_model/train_cosmos/outputs/cosmos3_action/action_sft_ur5_position_focus/action_policy_ur5_eef_close_desktop_rel10d_droid_qnorm_c32_fps15_r720_vw10_aw1_b4_10traj_ep0to9_500_rerun2_20260801/checkpoints/iter_000000500/model
+      checkpoint_config_path: /path/to/workspace/cosmos3_model/train_cosmos/outputs/cosmos3_action/action_sft_ur5_position_focus/action_policy_ur5_eef_close_desktop_rel10d_droid_qnorm_c32_fps15_r720_vw10_aw1_b4_10traj_ep0to9_500_rerun2_20260801/checkpoints/iter_000000500/training_metadata/config.yaml
+      action_stats_path: /path/to/workspace/cosmos3_model/train_cosmos/outputs/cosmos3_action/action_sft_ur5_position_focus/action_policy_ur5_eef_close_desktop_rel10d_droid_qnorm_c32_fps15_r720_vw10_aw1_b4_10traj_ep0to9_500_rerun2_20260801/checkpoints/iter_000000500/training_metadata/close_desktop_ur5_eef_rel10d_fps15_c32_ep0to9_vw10_aw1_rerun_20260801.json
+      action_normalization: qnorm
+      # Use the rerun2 checkpoint's own SFT config and qnorm statistics. This
+      # selects the exact ActionTransformPipeline for rollout and actor replay.
+      action_representation: ur5_eef_relative_10d_droid_native
+      action_chunk_size: 32
+      raw_action_dim: 10
+      max_action_dim: 64
+      action_clamp: [-1.0, 1.0]
+      domain_name: robomind-ur
+      prompt: close the laptop with the robot arm
+      # Required by this checkpoint's SFT transform and by the explicit
+      # member-level vision/action seeds used for logical GRPO exploration.
+      force_config_prompt: true
+      training_transform_compatible: true
+      camera_layout: droid
+      resolution_tier: 720
+      fps: 15
+      strict_source_view_size: [480, 640]
+      expected_composite_size: [720, 640]
+      reflection_padding_target: [960, 960]
+      num_steps: 15
+      guidance: 1.0
+      cfg_branch_checkpointing: false
+      # Restore the activation path used by formal job 767180. The newer
+      # whole-denoise-step checkpoint path reached 93.65% reserved memory at
+      # formal per-rank load in job 792386 and failed the 90% safety gate.
+      activation_checkpointing: full
+      actor_replay_step_checkpointing: false
+      # The DCP stores model/optimizer state only. Use the audited local
+      # Qwen3-VL bundle named by COSMOS3_VLM_PROCESSOR_PATH.
+      vlm_processor_from_checkpoint: false
+      chain_logprob: true
+      chain_logprob_mode: joint_sum
+      chain_sigma: 0.2
+      chain_sigma_min: 0.0001
+      chain_includes_initial_gaussian_logprob: true
+      flow_sde: false
+      additional_flow_noise: false
+      input_audit: true
+      rollout_retry_max_retries: 1
+      freeze_video_path: true
+      train_action_path_only: true
+      training_mode: action_only_grpo
+      internal_fsdp_shard: true
+      # HSDP mesh: shard the large Cosmos blocks across the four GPUs on one
+      # node and replicate that shard group across nodes. This prevents the
+      # per-block all-gathers from traversing the cluster socket fabric.
+      internal_fsdp_node_local: true
+      # Keep the node-local FSDP2 shards on GPU. CPUOffloadPolicy lazily pins
+      # another ~4.3 GiB per Actor on its first replay (~17 GiB/node), which
+      # then overlaps the next formal-load rollout and exhausts the 410.5 GiB
+      # Slurm cgroup. The measured Actor peak with offload was only 43.2% of a
+      # 95 GiB GPU, leaving ample room for these shards.
+      fsdp_cpu_offload: false
+      pin_trainable_param_storage: true
+      eager_load_trainable_state: true
+      trainable_param_patterns:
+        - action_proj_in.*
+        - action_proj_out.*
+        - action_modality_embed
+        - layers.*.input_layernorm_moe_gen.*
+        - layers.*.mlp_moe_gen.*
+        - layers.*.post_attention_layernorm_moe_gen.*
+      artifacts:
+        enabled: false
+        output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/cosmos_native
+        save_replay_tensors: false
+        max_episodes: 4
+        max_chunks: 5
+  optim:
+    lr: 2.0e-6
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-8
+    weight_decay: 0.01
+    clip_grad: 5.0
+  fsdp_config:
+    strategy: native
+    sharding_strategy: full_shard
+    cpu_offload: false
+    use_orig_params: true
+    gradient_checkpointing: false
+
+reward:
+  source: video_similarity
+  use_reward_model: false
+  video_similarity:
+    enabled: true
+    metric: neg_mse
+    alignment_mode: aligned
+    # Match the reference run's physical comparison layout exactly:
+    # D435 is the 2/3-area top tile, D405_0 is bottom-left, and D405_1 is
+    # bottom-right. This run keeps Ctrl-World's canonical field names
+    # (main=D405_0, wrist=D435), so `droid` is equivalent to the reference
+    # run's pre-swapped fields plus `main_top`. The aligned implementation
+    # first builds a 720x640 Ctrl composite, then bilinearly resizes both the
+    # Ctrl composite and Cosmos composite to 192x320 before computing MSE.
+    camera_layout: droid
+    size: [192, 320]
+    range_policy: error
+    reward_scale: 1.0
+  terminal_goal:
+    enabled: true
+    dataset_path: /path/to/shared/datasets/close_desktop_lerobot_joint_3cam
+    dataset_episode_index: -1
+    dataset_frame_index: -1
+    dataset_camera_keys:
+      main: observation.images.d435_rgb
+      wrist: observation.images.d405_0_rgb
+      extra: observation.images.d405_1_rgb
+    # Reorder canonical Ctrl-World field names into physical reward names:
+    # logical wrist=D435 -> reward main, logical main=D405_0 -> reward wrist.
+    ctrl_world_source_mapping:
+      main: wrist
+      wrist: main
+      extra: extra
+    window_size: 4
+    size: [192, 320]
+    range_policy: error
+    view_weights:
+      main: 0.6666666666666666
+      wrist: 0.16666666666666666
+      extra: 0.16666666666666666
+    reward_scale: 160.0
+    reference_output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/terminal_goal_reference
+  success_classifier:
+    enabled: true
+    diagnostic_only: true
+    replace_training_reward: false
+    input_view: d405_0
+    ctrl_world_view_index: 0
+    window_size: 4
+    threshold: 0.5
+  success_model:
+    type: ResnetRewModel
+    from_pretrained: /path/to/workspace/checkpoint/reward_model/outputs/close_laptop_resnet_rm_ep0_4_d405_0_rgb
+    artifact_name: resnet_rm.pth
+    camera_key: observation.images.d405_0_rgb
+    ctrl_world_view_index: 0
+    input_view: main
+    input_size: [224, 224]
+    threshold: 0.5
+    signal: probability
+    inference_batch_size: 64
+
+critic:
+  use_critic_model: false
+
+exp:
+  paths:
+    ctrl_world_repo_path: /path/to/workspace/Ctrl-World
+    ctrl_world_ckpt_path: /path/to/workspace/Ctrl-World/model_ckpt/ctrl_world_close_laptop_state_3cam_nojump_finetune_100k/checkpoint-100000.pt
+    ctrl_world_stat_path: /path/to/workspace/Ctrl-World/dataset_meta_info/ctrl_world_close_desktop_eef_state_3cam/stat.json
+    initial_image_path: /path/to/shared/datasets/close_desktop_lerobot_joint_3cam
+    initial_joint_state_path: /path/to/shared/datasets/close_desktop_lerobot_joint_3cam
+    reward_model_path: /path/to/workspace/checkpoint/reward_model/outputs/close_laptop_resnet_rm_ep0_4_d405_0_rgb
+    policy_model_path: ${actor.model.model_path}
+    svd_path: /path/to/workspace/Ctrl-World/pretrained/stable-video-diffusion-img2vid
+    clip_path: /path/to/workspace/Ctrl-World/pretrained/clip-vit-base-patch32
+  training:
+    max_epochs: 50
+    total_num_envs: ${env.train.total_num_envs}
+    group_size: 16
+    max_episode_steps: 160
+    max_steps_per_rollout_epoch: 160
+    rollout_epoch: ${algorithm.rollout_epoch}
+    update_epoch: 1
+  rollout:
+    video_fps: 15
+  ctrl_world:
+    num_inference_steps: 20
+    decode_chunk_size: 7
+    policy_image_size: [192, 320]
+    policy_action_type: delta_eef
+    policy_gripper_type: passthrough
+    joint_action_adapter: none
+    action_to_eef_adapter: analytic_ur5_rot6d
+    adapter_translation_gain: 1.0
+    adapter_rotation_gain: 1.0
+    adapter_translation_frame: body
+    adapter_translation_sign: 1.0
+    adapter_rotation_mode: body
+    adapter_gripper_hard_clamp: true
+    adapter_gripper_hard_mode: clip_only
+    ctrl_world_internal_rollout: true
+    ctrl_world_window_frames: 5
+    ctrl_world_window_emit_frames: 4
+    ctrl_world_window_use_lookahead_latent: true
+    ctrl_world_window_history_mode: sparse_window
+  optim:
+    micro_batch_size: 1
+    global_batch_size: 640
+    seed: 42
+    num_steps: 15
+    lr: 2.0e-6
+    weight_decay: 0.01
+    clip_grad: 5.0

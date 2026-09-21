@@ -1,0 +1,382 @@
+defaults:
+  - ctrl_world_close_laptop_grpo_cosmos_fpo_native_unipc_large
+  - _self_
+
+# Single-task nest-four-cups contract. The retained runtime names its generic
+# manifest scheduler and sparse evaluator `duck`; the active key below is only
+# `nest_four_cups`, and no duck checkpoint, prompt, or episode is used.
+cluster:
+  num_nodes: 32
+
+runner:
+  logger:
+    experiment_name: nest_four_cups_b512_c10_32n4g_u50_gs1
+    logger_backends: [tensorboard]
+  max_epochs: 50
+  max_steps: 50
+  val_check_interval: 5
+  save_interval: 5
+  checkpoint_milestone_interval: 5
+  checkpoint_keep_latest_recovery: 1
+
+algorithm:
+  rollout_epoch: 1
+  trajectory_chunks: 10
+  trajectory_records:
+    split_manifest: /path/to/rlinf_release/configs/nest_four_cups_split_manifest.json
+    strict_episode_allowlist: true
+    trajectory_frames: 320
+  cross_rank_group:
+    enabled: true
+    members_per_rank: 4
+    rank_layout: contiguous
+    gather_backend: actor_world
+    seed_base: 42
+    per_member_vision_seed: true
+    semantic_topology_v2: true
+    logical_rounds_per_update: 1
+    group_slots_per_logical_round: 32
+    waves_per_logical_round: 1
+    chunks_per_trajectory: 10
+    expected_trajectories_per_update: 512
+    reset_episode_min: 0
+    reset_episode_max: 99
+    reset_episode_allowlist_manifest: ${algorithm.trajectory_records.split_manifest}
+    reset_episode_allowlist_key: training.episodes
+    episodes_per_color_per_update: 32
+    color_order: [nest_four_cups]
+    sample_without_replacement: true
+    reshuffle_on_exhaustion: true
+    fixed_ctrl_seed: 42
+    seed_derivation_version: blake2b-int63-v2
+
+env:
+  train:
+    total_num_envs: 512
+    group_size: 4
+    max_episode_steps: 320
+    max_steps_per_rollout_epoch: 320
+    episode_manifest_path: ${algorithm.trajectory_records.split_manifest}
+    episode_manifest_split: training
+    strict_episode_allowlist: true
+    initial_image_dataset_type: lerobot_book
+    initial_image_camera_keys:
+      - observation.images.d405_rgb
+      - observation.images.d405_1_rgb
+      - observation.images.d435_rgb
+    exclude_reset_ids: [13, 15, 28, 40, 53, 56, 62, 64, 65, 70, 71, 73, 75, 76, 79, 82, 93, 96, 98, 99]
+    use_ordered_reset_state_ids: false
+    random_reset_state_ids: false
+    auto_reset: false
+    ignore_terminations: true
+    initial_frame_index: 0
+    terminal_goal_frame_index: -1
+    terminal_goal_same_episode: true
+    ctrl_world_repo_path: ${exp.paths.ctrl_world_repo_path}
+    ctrl_world_ckpt_path: ${exp.paths.ctrl_world_ckpt_path}
+    ctrl_world_svd_model_path: ${exp.paths.svd_path}
+    ctrl_world_clip_model_path: ${exp.paths.clip_path}
+    ctrl_world_stat_path: ${exp.paths.ctrl_world_stat_path}
+    initial_image_path: ${exp.paths.initial_image_path}
+    initial_joint_state_path: ${exp.paths.initial_joint_state_path}
+    ctrl_world_reward_model_path: ${exp.paths.reward_model_path}
+    self_feedback:
+      enabled: true
+      source: imagined_video_chunk
+      frame_index: -1
+      target_size: [720, 640]
+      strict: true
+    video_cfg:
+      save_video: false
+      save_all_trajectories: false
+      stream_all_cosmos_comparison: false
+      save_best_rollout: false
+      save_worst_rollout: false
+      save_success_failure_mse_extremes: true
+      video_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos/train
+      mse_extremes_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos/train/mse_extremes
+      fps: 15
+    ctrl_world_cfg:
+      num_inference_steps: 20
+      guidance_scale: 1.0
+      decode_chunk_size: 7
+      image_size: [192, 320]
+      policy_image_size: [192, 320]
+      use_raw_reset_policy_views: true
+      per_view_vae_codec: true
+      prompt_override: Nest the four cups into one stack
+      prompt_from_episode: true
+      chunk: 32
+      fps: 30
+      cosmos_action_fps: 15
+      ctrl_condition_fps: 30
+      action_fps_resample: true
+      action_stride: 1
+      coupling: actions_only
+      feedback_source: cosmos
+      ctrl_world_internal_rollout: true
+      ctrl_world_window_frames: 5
+      ctrl_world_window_emit_frames: 4
+      ctrl_world_window_use_lookahead_latent: true
+      ctrl_world_window_history_mode: sparse_window
+      reward_model_diagnostic_only: true
+      # Nest has one task-level success checkpoint, not one checkpoint per
+      # duck color. Use the singular runtime interface so ColorRoutedResnet
+      # does not try to match the legacy brown/red/white/yellow ranges.
+      reward_models: null
+      reward_model: ${reward.success_model}
+      main_view_index: 0
+      wrist_view_index: 2
+      side_view_index: 1
+      camera_keys:
+        main: observation.images.d405_rgb
+        wrist: observation.images.d435_rgb
+        side: observation.images.d405_1_rgb
+      common_random_numbers_within_group: true
+      common_noise_seed: 42
+      per_member_vision_seed: true
+  eval:
+    total_num_envs: 20
+    group_size: 1
+    enable_offload: true
+    specific_reset_id: [13, 15, 28, 40, 53, 56, 62, 64, 65, 70, 71, 73, 75, 76, 79, 82, 93, 96, 98, 99]
+    episode_manifest_path: ${algorithm.trajectory_records.split_manifest}
+    episode_manifest_split: evaluation
+    strict_episode_allowlist: true
+    initial_image_dataset_type: lerobot_book
+    initial_image_camera_keys:
+      - observation.images.d405_rgb
+      - observation.images.d405_1_rgb
+      - observation.images.d435_rgb
+    seed: 42
+    max_episode_steps: 320
+    max_steps_per_rollout_epoch: 320
+    auto_reset: false
+    ignore_terminations: true
+    is_eval: true
+    initial_frame_index: 0
+    terminal_goal_frame_index: -1
+    terminal_goal_same_episode: true
+    ctrl_world_repo_path: ${exp.paths.ctrl_world_repo_path}
+    ctrl_world_ckpt_path: ${exp.paths.ctrl_world_ckpt_path}
+    ctrl_world_svd_model_path: ${exp.paths.svd_path}
+    ctrl_world_clip_model_path: ${exp.paths.clip_path}
+    ctrl_world_stat_path: ${exp.paths.ctrl_world_stat_path}
+    initial_image_path: ${exp.paths.initial_image_path}
+    initial_joint_state_path: ${exp.paths.initial_joint_state_path}
+    self_feedback:
+      enabled: true
+      source: imagined_video_chunk
+      frame_index: -1
+      target_size: [720, 640]
+      strict: true
+    video_cfg:
+      save_video: true
+      save_cosmos_comparison: false
+      camera_layout: droid
+      fps: 15
+      video_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos/eval
+      save_success_frame: false
+    ctrl_world_cfg:
+      num_inference_steps: 20
+      guidance_scale: 1.0
+      decode_chunk_size: 7
+      image_size: [192, 320]
+      policy_image_size: [192, 320]
+      use_raw_reset_policy_views: true
+      per_view_vae_codec: true
+      prompt_override: Nest the four cups into one stack
+      prompt_from_episode: true
+      chunk: 32
+      fps: 30
+      cosmos_action_fps: 15
+      ctrl_condition_fps: 30
+      action_fps_resample: true
+      action_stride: 1
+      coupling: actions_only
+      feedback_source: cosmos
+      ctrl_world_internal_rollout: true
+      ctrl_world_window_frames: 5
+      ctrl_world_window_emit_frames: 4
+      ctrl_world_window_use_lookahead_latent: true
+      ctrl_world_window_history_mode: sparse_window
+      reward_model_diagnostic_only: true
+      reward_models: null
+      reward_model: ${reward.success_model}
+      main_view_index: 0
+      wrist_view_index: 2
+      side_view_index: 1
+      camera_keys:
+        main: observation.images.d405_rgb
+        wrist: observation.images.d435_rgb
+        side: observation.images.d405_1_rgb
+
+actor:
+  micro_batch_size: 1
+  global_batch_size: 1280
+  seed: 42
+  model:
+    model_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_nest_four_cups_80train_20val_15k/checkpoints/iter_000015000/model
+    num_action_chunks: 32
+    action_dim: 10
+    num_steps: 15
+    cosmos:
+      checkpoint_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_nest_four_cups_80train_20val_15k/checkpoints/iter_000015000/model
+      checkpoint_config_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_nest_four_cups_80train_20val_15k/config.yaml
+      action_stats_path: /path/to/workspace/check-point/cosmos3_new/action_stats/action_policy_ur5_eef_nest_four_cups_80train_20val_15k_action_stats.json
+      action_normalization: qnorm
+      action_representation: ur5_eef_relative_10d_droid_native
+      action_chunk_size: 32
+      raw_action_dim: 10
+      max_action_dim: 64
+      domain_name: robomind-ur
+      prompt: Nest the four cups into one stack
+      force_config_prompt: false
+      sampler: unipc
+      sampler_family: ODE
+      num_steps: 15
+      guidance: 1.0
+      fps: 15
+      resolution_tier: 720
+      replay_objective: fpo_action_head
+      fpo_num_mc_samples: 4
+      fpo_time_distribution: waver
+      fpo_training_shift: 10.0
+      fpo_timestep_scale: 1000.0
+      freeze_video_path: true
+      train_action_path_only: true
+      training_mode: action_only_grpo
+
+reward:
+  source: video_similarity
+  use_reward_model: false
+  video_similarity:
+    enabled: true
+    metric: neg_mse
+    alignment_mode: aligned
+    camera_layout: droid
+    size: [192, 320]
+    range_policy: error
+    reward_scale: 1.0
+  terminal_goal:
+    enabled: true
+    reference_mode: same_episode_last_frame
+    per_episode: true
+    strict_same_episode: true
+    dataset_path: /path/to/shared/datasets/nest_four_cups
+    dataset_episode_index: -1
+    dataset_frame_index: -1
+    dataset_camera_keys:
+      main: observation.images.d435_rgb
+      wrist: observation.images.d405_rgb
+      extra: observation.images.d405_1_rgb
+    ctrl_world_source_mapping:
+      main: wrist
+      wrist: main
+      extra: extra
+    window_size: 4
+    size: [192, 320]
+    range_policy: error
+    view_weights:
+      main: 0.6666666666666666
+      wrist: 0.16666666666666666
+      extra: 0.16666666666666666
+    reward_scale: 160.0
+    reference_output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/terminal_goal_reference
+  success_classifier:
+    enabled: true
+    diagnostic_only: true
+    replace_training_reward: false
+    input_view: d405
+    ctrl_world_view_index: 0
+    window_size: 4
+    aggregation: mean
+    threshold: 0.5
+  success_model:
+    type: ResnetRewModel
+    from_pretrained: /path/to/shared/checkpoint/reward_model/outputs/nest_four_cups_resnet_rm_d405_rgb
+    artifact_name: resnet_rm_best.pth
+    camera_key: observation.images.d405_rgb
+    ctrl_world_view_index: 0
+    input_view: main
+    input_size: [224, 224]
+    threshold: 0.5
+    signal: probability
+    inference_batch_size: 64
+  success_models:
+    nest_four_cups:
+      from_pretrained: /path/to/shared/checkpoint/reward_model/outputs/nest_four_cups_resnet_rm_d405_rgb
+      artifact_name: resnet_rm_best.pth
+      sha256: b737eab77b43d5755f3a4c2ba8ac109a1786500c456aef6228c62df6a31a74d3
+
+exp:
+  paths:
+    ctrl_world_ckpt_path: /path/to/shared/checkpoint/CtrlWorld/ctrl_world_nest_four_cups_selfcond/weights-100000.pt
+    ctrl_world_stat_path: /path/to/shared/checkpoint/CtrlWorld/ctrl_world_nest_four_cups_selfcond/dataset_meta/stat.json
+    initial_image_path: /path/to/shared/datasets/nest_four_cups
+    initial_joint_state_path: /path/to/shared/datasets/nest_four_cups
+    reward_model_path: /path/to/shared/checkpoint/reward_model/outputs/nest_four_cups_resnet_rm_d405_rgb
+    policy_model_path: ${actor.model.model_path}
+  training:
+    max_epochs: 50
+    total_num_envs: 512
+    group_size: 16
+    max_episode_steps: 320
+    max_steps_per_rollout_epoch: 320
+    rollout_epoch: 1
+    update_epoch: 1
+  evaluation:
+    total_num_envs: 20
+    group_size: 1
+    max_episode_steps: 320
+    max_steps_per_rollout_epoch: 320
+    rollout_epoch: 1
+  ctrl_world:
+    num_inference_steps: 20
+    guidance_scale: 1.0
+    action_stride: 1
+  optim:
+    micro_batch_size: 1
+    global_batch_size: 1280
+    seed: 42
+    num_steps: 15
+    lr: 2.0e-6
+
+duck:
+  enabled: true
+  split_manifest: /path/to/rlinf_release/configs/nest_four_cups_split_manifest.json
+  colors: [nest_four_cups]
+  topology:
+    nodes: 32
+    gpus_per_node: 4
+    total_gpus: 128
+  training:
+    split: training
+    episodes_per_color_per_update: 32
+    groups_per_update: 32
+    group_size: 16
+    base_seed: 42
+    seed_derivation_version: blake2b-int63-v2
+    sample_without_replacement: true
+    reshuffle_on_exhaustion: true
+    initial_frame_index: 0
+    terminal_goal_frame_index: -1
+  evaluation:
+    enabled: true
+    split: evaluation
+    episode_ids: [13, 15, 28, 40, 53, 56, 62, 64, 65, 70, 71, 73, 75, 76, 79, 82, 93, 96, 98, 99]
+    synchronous_after_update: true
+    trajectories_per_episode: 1
+    record_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/evaluation_records
+    record_path_template: step_{update_index}.jsonl
+    update_index_origin: 0
+    analysis_step_origin: 1
+    seed_base: 42
+    seed_formula: seed_base + evaluation_count * update_index + sorted_episode_index
+    expected_records_per_step: 20
+    fail_on_incomplete: true
+    isolate_from_training_rng: true
+    exclude_from_training: true
+    interval_updates: 5
+  analysis:
+    enabled: false

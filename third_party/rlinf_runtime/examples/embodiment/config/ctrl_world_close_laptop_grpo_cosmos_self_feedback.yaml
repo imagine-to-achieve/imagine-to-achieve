@@ -1,0 +1,493 @@
+defaults:
+- experiment/ctrl_world_close_laptop_grpo_pi05@exp
+- env/ctrl_world_close_laptop@env.train
+- env/ctrl_world_close_laptop@env.eval
+- model/cosmos@actor.model
+- training_backend/fsdp@actor.fsdp_config
+- override hydra/job_logging: stdout
+- _self_
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+cluster:
+  num_nodes: 1
+  component_placement:
+    actor,env,rollout:
+      node_group: gpu
+      placement: all
+  node_groups:
+  - label: gpu
+    # "all" resolves against range(cluster.num_nodes), so this stays correct
+    # whether the job spans 1 node or many -- a literal "0" would silently
+    # drop every node beyond rank 0 out of the "gpu" node group (and hence
+    # out of the actor/env/rollout "placement: all"), see
+    # rlinf/scheduler/cluster/node.py's node_group filtering.
+    node_ranks: all
+    env_configs:
+    - node_ranks: all
+      python_interpreter_path: ${oc.env:VENV_PATH}/bin/python
+      env_vars:
+      # cosmos-framework logs one INFO line per action-server request (8x/chunk)
+      # via loguru; WARNING keeps the training log readable. Set back to INFO
+      # (or unset) to see per-request ms_total/ms_decode/ms_infer latency again.
+      - LOGURU_LEVEL: WARNING
+      # Root-caused (see fsdp_model_manager.py / edge4b_backend.py's hybrid
+      # cpu:gloo,cuda:nccl process-group fix): reverted the temporary
+      # NCCL_DEBUG=INFO/NCCL_DEBUG_SUBSYS bump used to trace the group32
+      # (2-node/8-GPU) cross-node "NCCL Error 2: unhandled system error"
+      # back to WARN -- INFO is noisy for normal runs.
+      - NCCL_DEBUG: WARN
+      - NCCL_NET_PLUGIN: none
+      - NCCL_NET: Socket
+      - NCCL_IB_DISABLE: '1'
+      - FI_PROVIDER: sockets
+      - TORCH_NCCL_ASYNC_ERROR_HANDLING: '1'
+runner:
+  task_type: embodied
+  logger:
+    log_path: ../results
+    project_name: rlinf
+    experiment_name: ctrl_world_close_laptop_grpo_cosmos_self_feedback
+    logger_backends:
+    - tensorboard
+    - wandb
+  max_epochs: ${exp.training.max_epochs}
+  max_steps: -1
+  only_eval: false
+  rollout_only: false
+  # UR5-EEF close-desktop action stats excluded episodes 4/11/24/27 from the
+  # normalization-stats fit (see *_train_excl_4_11_24_27.json), so those are
+  # the held-out validation trajectories -- run eval on them periodically
+  # instead of relying solely on noisy on-policy training-rollout reward.
+  val_check_interval: 5
+  save_interval: 1
+  checkpoint_milestone_interval: 0
+  checkpoint_keep_latest_recovery: -1
+  resume_dir: null
+  ckpt_path: null
+algorithm:
+  normalize_advantages: true
+  kl_penalty: kl
+  group_size: ${exp.training.group_size}
+  cross_rank_group:
+    enabled: ${oc.decode:${oc.env:CROSS_RANK_GROUP_ENABLED,false}}
+    members_per_rank: ${oc.decode:${oc.env:MEMBERS_PER_RANK,4}}
+    rank_layout: contiguous
+    gather_backend: actor_world
+    seed_base: ${exp.optim.seed}
+    # Default false preserves the validated qnorm_c32/native behavior (vision
+    # noise shared group-wide via CRN, action noise unique per member). Only
+    # backends whose policy does one joint vision+action diffusion pass (e.g.
+    # Cosmos Edge) need this true -- see build_cross_rank_rollout_metadata's
+    # docstring in rlinf/algorithms/cross_rank_grpo.py.
+    per_member_vision_seed: ${oc.decode:${oc.env:CROSS_RANK_PER_MEMBER_VISION_SEED,false}}
+  reward_coef: 1.0
+  rollout_epoch: ${exp.training.rollout_epoch}
+  eval_rollout_epoch: ${exp.evaluation.rollout_epoch}
+  reward_type: chunk_level
+  logprob_type: chunk_level
+  lambda_action: 1.0
+  entropy_type: token_level
+  update_epoch: ${exp.training.update_epoch}
+  adv_type: grpo
+  loss_type: actor
+  loss_agg_func: token-mean
+  kl_beta: 0.0
+  entropy_bonus: 0
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+  clip_ratio_c: 3.0
+  diagnostics:
+    action_ratio_explosion_threshold: 10.0
+    action_ratio_explosion_patience: 2
+    warn_video_range: true
+    warn_frozen_video_grad: true
+  value_clip: 0.2
+  huber_delta: 10.0
+  gamma: 0.99
+  gae_lambda: 0.95
+  filter_rewards: false
+  rewards_lower_bound: 0.0
+  rewards_upper_bound: 1.0
+  sampling_params:
+    do_sample: true
+    temperature_train: 1.0
+    temperature_eval: 0.6
+    top_k: 50
+    top_p: 1.0
+    repetition_penalty: 1.0
+    add_BOS: false
+  length_params:
+    max_new_token: null
+    max_length: 1024
+    min_length: 1
+env:
+  group_name: EnvGroup
+  train:
+    reward_source: ${reward.source}
+    env_type: cosmos_self_ctrl_world
+    # Cosmos's own last imagined frame (rather than Ctrl-World's real frame)
+    # feeds the next chunk's policy condition image; Ctrl-World still advances
+    # independently underneath purely to supply the video-similarity reward.
+    # See rlinf/envs/world_model/world_model_ctrl_world_env.py::CosmosSelfFeedbackCtrlWorldEnv.
+    self_feedback:
+      enabled: true
+      source: imagined_video_chunk
+      frame_index: -1
+      target_size: [720, 640]
+      strict: true
+    total_num_envs: ${exp.training.total_num_envs}
+    group_size: ${oc.decode:${oc.env:LOCAL_GROUP_SIZE,${exp.training.group_size}}}
+    seed: ${exp.optim.seed}
+    max_episode_steps: ${exp.training.max_episode_steps}
+    max_steps_per_rollout_epoch: ${exp.training.max_steps_per_rollout_epoch}
+    auto_reset: false
+    # The current dense reward is a training signal, not a calibrated success
+    # classifier. Never derive task termination/success from it.
+    ignore_terminations: true
+    ctrl_world_repo_path: ${exp.paths.ctrl_world_repo_path}
+    ctrl_world_ckpt_path: ${exp.paths.ctrl_world_ckpt_path}
+    ctrl_world_stat_path: ${exp.paths.ctrl_world_stat_path}
+    initial_image_path: ${exp.paths.initial_image_path}
+    initial_joint_state_path: ${exp.paths.initial_joint_state_path}
+    ctrl_world_reward_model_path: ${exp.paths.reward_model_path}
+    # Keep the held-out eval split (env.eval.specific_reset_id below) out of
+    # training rollouts. initial_image_path is the same 40-episode dataset
+    # for train and eval, and nothing else here excludes these ids.
+    exclude_reset_ids: [4, 11, 24, 27]
+    video_cfg:
+      save_video: false
+      save_best_rollout: ${oc.env:SAVE_BEST_ROLLOUT_VIDEO,false}
+      best_rollout_base_dir: ${oc.env:BEST_ROLLOUT_VIDEO_DIR,${runner.logger.log_path}/${runner.logger.experiment_name}/videos/train/best_rollout}
+      fps: ${exp.rollout.video_fps}
+      video_base_dir: ${runner.logger.log_path}/videos/train
+      # Success is reported through metrics; success-frame artifact capture stays opt-in.
+      save_success_frame: false
+    ctrl_world_cfg:
+      num_inference_steps: ${exp.ctrl_world.num_inference_steps}
+      decode_chunk_size: ${oc.env:CHUNK_SIZE,16}
+      policy_image_size:
+      - 192
+      - 320
+      frame_level_cond: ${exp.ctrl_world.frame_level_cond}
+      his_cond_zero: ${exp.ctrl_world.his_cond_zero}
+      policy_action_type: ${exp.ctrl_world.policy_action_type}
+      policy_action_dim: ${actor.model.action_dim}
+      policy_gripper_type: ${exp.ctrl_world.policy_gripper_type}
+      joint_action_adapter: ${exp.ctrl_world.joint_action_adapter}
+      joint_fk_tcp_xyz: ${exp.ctrl_world.joint_fk_tcp_xyz}
+      joint_fk_tcp_rotvec: ${exp.ctrl_world.joint_fk_tcp_rotvec}
+      action_to_eef_adapter: ${exp.ctrl_world.action_to_eef_adapter}
+      adapter_translation_gain: ${exp.ctrl_world.adapter_translation_gain}
+      adapter_rotation_gain: ${exp.ctrl_world.adapter_rotation_gain}
+      adapter_translation_frame: ${exp.ctrl_world.adapter_translation_frame}
+      adapter_translation_sign: ${exp.ctrl_world.adapter_translation_sign}
+      adapter_rotation_mode: ${exp.ctrl_world.adapter_rotation_mode}
+      adapter_gripper_hard_clamp: ${exp.ctrl_world.adapter_gripper_hard_clamp}
+      adapter_gripper_hard_mode: ${exp.ctrl_world.adapter_gripper_hard_mode}
+      action_to_eef_adapter_path: ${exp.ctrl_world.action_to_eef_adapter_path}
+      joint_action_to_state_adapter_path: ${exp.ctrl_world.joint_action_to_state_adapter_path}
+      reward_model: ${reward.success_model}
+      chunk: ${oc.env:CHUNK_SIZE,16}
+      fps: ${oc.env:CTRL_WORLD_FPS,30}
+      cosmos_action_fps: ${oc.env:COSMOS_ACTION_FPS,20}
+      ctrl_condition_fps: ${oc.env:CTRL_CONDITION_FPS,30}
+      action_fps_resample: ${oc.env:ACTION_FPS_RESAMPLE,true}
+      ctrl_world_internal_rollout: ${exp.ctrl_world.ctrl_world_internal_rollout}
+      ctrl_world_window_frames: ${exp.ctrl_world.ctrl_world_window_frames}
+      ctrl_world_window_emit_frames: ${exp.ctrl_world.ctrl_world_window_emit_frames}
+      ctrl_world_window_use_lookahead_latent: ${exp.ctrl_world.ctrl_world_window_use_lookahead_latent}
+      ctrl_world_window_history_mode: ${exp.ctrl_world.ctrl_world_window_history_mode}
+      # Hold VAE and diffusion noise fixed within each GRPO group so reward
+      # differences are attributable to the policy actions.
+      common_random_numbers_within_group: ${oc.env:CTRL_WORLD_COMMON_RANDOM_NUMBERS_WITHIN_GROUP,true}
+      common_noise_seed: ${oc.env:CTRL_WORLD_SAMPLING_SEED,4242}
+      # Must match algorithm.cross_rank_group.per_member_vision_seed (same
+      # env var drives both): whether cross-rank vision_noise_seed is shared
+      # group-wide (false, default) or varies per member equal to
+      # action_noise_seed (true, required by joint-diffusion policies like
+      # Cosmos Edge). See build_cross_rank_rollout_metadata's docstring.
+      per_member_vision_seed: ${oc.decode:${oc.env:CROSS_RANK_PER_MEMBER_VISION_SEED,false}}
+      # Physical cameras: D405_0=main/left, D405_1=right/extra, D435=wrist.
+      main_view_index: 0
+      wrist_view_index: 2
+    enable_offload: false
+  eval:
+    reward_source: ${reward.source}
+    env_type: cosmos_self_ctrl_world
+    self_feedback:
+      enabled: true
+      source: imagined_video_chunk
+      frame_index: -1
+      target_size: [720, 640]
+      strict: true
+    seed: ${oc.decode:${oc.env:EVALUATION_SEED,20260723}}
+    # One env per held-out episode below (4/11/24/27 -- excluded from the
+    # UR5-EEF action-stats fit, see runner.val_check_interval comment above).
+    total_num_envs: 4
+    specific_reset_id: [4, 11, 24, 27]
+    # Keep every eval video on one reset trajectory through final truncation.
+    auto_reset: false
+    # Match training: run until max_episode_steps truncation and do not infer
+    # success or termination from the current dense reward.
+    ignore_terminations: true
+    ctrl_world_repo_path: ${exp.paths.ctrl_world_repo_path}
+    ctrl_world_ckpt_path: ${exp.paths.ctrl_world_ckpt_path}
+    ctrl_world_stat_path: ${exp.paths.ctrl_world_stat_path}
+    initial_image_path: ${exp.paths.initial_image_path}
+    initial_joint_state_path: ${exp.paths.initial_joint_state_path}
+    max_episode_steps: ${exp.evaluation.max_episode_steps}
+    max_steps_per_rollout_epoch: ${exp.evaluation.max_steps_per_rollout_epoch}
+    group_size: 1
+    is_eval: true
+    video_cfg:
+      save_video: false
+      # Eval normally records only the Ctrl-World rollout.  When enabled for
+      # a native Cosmos policy, also save the established 10D-style
+      # "Cosmos plan | Ctrl-World predicted" comparison video.
+      save_cosmos_comparison: false
+      camera_layout: droid
+      fps: ${exp.rollout.video_fps}
+      video_base_dir: ${runner.logger.log_path}/videos/eval
+      # Success is reported through metrics; success-frame artifact capture stays opt-in.
+      save_success_frame: false
+    ctrl_world_cfg:
+      num_inference_steps: ${exp.ctrl_world.num_inference_steps}
+      decode_chunk_size: ${oc.env:CHUNK_SIZE,16}
+      policy_image_size:
+      - 192
+      - 320
+      frame_level_cond: ${exp.ctrl_world.frame_level_cond}
+      his_cond_zero: ${exp.ctrl_world.his_cond_zero}
+      policy_action_type: ${exp.ctrl_world.policy_action_type}
+      policy_action_dim: ${actor.model.action_dim}
+      policy_gripper_type: ${exp.ctrl_world.policy_gripper_type}
+      joint_action_adapter: ${exp.ctrl_world.joint_action_adapter}
+      joint_fk_tcp_xyz: ${exp.ctrl_world.joint_fk_tcp_xyz}
+      joint_fk_tcp_rotvec: ${exp.ctrl_world.joint_fk_tcp_rotvec}
+      action_to_eef_adapter: ${exp.ctrl_world.action_to_eef_adapter}
+      adapter_translation_gain: ${exp.ctrl_world.adapter_translation_gain}
+      adapter_rotation_gain: ${exp.ctrl_world.adapter_rotation_gain}
+      adapter_translation_frame: ${exp.ctrl_world.adapter_translation_frame}
+      adapter_translation_sign: ${exp.ctrl_world.adapter_translation_sign}
+      adapter_rotation_mode: ${exp.ctrl_world.adapter_rotation_mode}
+      adapter_gripper_hard_clamp: ${exp.ctrl_world.adapter_gripper_hard_clamp}
+      adapter_gripper_hard_mode: ${exp.ctrl_world.adapter_gripper_hard_mode}
+      action_to_eef_adapter_path: ${exp.ctrl_world.action_to_eef_adapter_path}
+      joint_action_to_state_adapter_path: ${exp.ctrl_world.joint_action_to_state_adapter_path}
+      reward_model: ${reward.success_model}
+      chunk: ${oc.env:CHUNK_SIZE,16}
+      fps: ${oc.env:CTRL_WORLD_FPS,30}
+      cosmos_action_fps: ${oc.env:COSMOS_ACTION_FPS,20}
+      ctrl_condition_fps: ${oc.env:CTRL_CONDITION_FPS,30}
+      action_fps_resample: ${oc.env:ACTION_FPS_RESAMPLE,true}
+      ctrl_world_internal_rollout: ${exp.ctrl_world.ctrl_world_internal_rollout}
+      ctrl_world_window_frames: ${exp.ctrl_world.ctrl_world_window_frames}
+      ctrl_world_window_emit_frames: ${exp.ctrl_world.ctrl_world_window_emit_frames}
+      ctrl_world_window_use_lookahead_latent: ${exp.ctrl_world.ctrl_world_window_use_lookahead_latent}
+      ctrl_world_window_history_mode: ${exp.ctrl_world.ctrl_world_window_history_mode}
+      main_view_index: 0
+      wrist_view_index: 2
+    enable_offload: false
+rollout:
+  group_name: RolloutGroup
+  generation_backend: huggingface
+  recompute_logprobs: false
+  unnorm_key: libero_10
+  enable_offload: ${oc.env:ROLLOUT_OFFLOAD,false}
+  pipeline_stage_num: 1
+  enable_cuda_graph: false
+  collect_prev_infos: true
+  collect_transitions: true
+  model:
+    model_path: ${exp.paths.policy_model_path}
+    precision: ${actor.model.precision}
+actor:
+  group_name: ActorGroup
+  training_backend: fsdp
+  micro_batch_size: ${exp.optim.micro_batch_size}
+  global_batch_size: ${exp.optim.global_batch_size}
+  seed: ${exp.optim.seed}
+  enable_offload: ${oc.env:ACTOR_OFFLOAD,false}
+  model:
+    model_path: ${oc.env:COSMOS3_CHECKPOINT_PATH,''}
+    model_type: cosmos
+    num_action_chunks: ${oc.env:CHUNK_SIZE,16}
+    action_dim: ${oc.env:POLICY_ACTION_DIM,10}
+    num_steps: ${oc.env:COSMOS3_NUM_STEPS,20}
+    cosmos:
+      backend: native
+      camera_layout: droid
+      video_similarity_size:
+      - 192
+      - 320
+      freeze_video_path: true
+      train_action_path_only: true
+      training_mode: action_only_grpo
+      framework_path: ${oc.env:COSMOS3_FRAMEWORK_PATH,../cosmos-framework}
+      checkpoint_path: ${oc.env:COSMOS3_CHECKPOINT_PATH,''}
+      checkpoint_config_path: ${oc.env:COSMOS3_CHECKPOINT_CONFIG_PATH,''}
+      checkpoint_name: ${oc.env:COSMOS3_CHECKPOINT_NAME,''}
+      action_representation: ${oc.env:COSMOS3_ACTION_REPRESENTATION,ur5_eef_relative_10d}
+      domain_name: ${oc.env:COSMOS3_DOMAIN_NAME,robomind-ur}
+      prompt: ${oc.env:COSMOS3_PROMPT,Close the laptop}
+      raw_action_dim: ${oc.env:COSMOS3_RAW_ACTION_DIM,10}
+      action_chunk_size: ${oc.env:CHUNK_SIZE,16}
+      max_action_dim: ${oc.env:COSMOS3_MAX_ACTION_DIM,64}
+      num_steps: ${oc.env:COSMOS3_NUM_STEPS,20}
+      guidance: ${oc.env:COSMOS3_GUIDANCE,1.0}
+      fps: ${oc.env:COSMOS3_FPS,20}
+      # Use the saved SFT resolution tier directly. Inferring from a 720x640
+      # DROID composite misclassifies its 640px short side as the 480 tier.
+      resolution_tier: ${oc.env:COSMOS3_RESOLUTION_TIER,720}
+      sampler: ${oc.env:COSMOS3_SAMPLER,unipc}
+      output_dir: ${oc.env:COSMOS3_OUTPUT_DIR,logs/native_cosmos_output}
+      artifacts:
+        enabled: ${oc.env:SAVE_DATA,false}
+        output_dir: ${oc.env:COSMOS_ARTIFACT_DIR,${runner.logger.log_path}/artifacts}
+        save_replay_tensors: true
+        max_episodes: ${oc.env:SAVE_MAX_EPISODES,2}
+        max_chunks: ${oc.env:SAVE_MAX_CHUNKS,4}
+      action_stats_path: ${oc.env:COSMOS3_ACTION_STATS_PATH,''}
+      action_normalization: ${oc.env:COSMOS3_ACTION_NORMALIZATION,auto}
+      guardrails: ${oc.env:COSMOS3_GUARDRAILS,false}
+      offload_guardrail_models: ${oc.env:COSMOS3_OFFLOAD_GUARDRAIL_MODELS,false}
+      internal_fsdp_shard: ${oc.env:COSMOS3_INTERNAL_FSDP_SHARD,true}
+      # The native service owns these DTensor parameters through FSDP2 while
+      # RLinf registers an outer proxy for optimizer/state-dict plumbing.
+      # Moving only that proxy bypasses FSDP2 reset_sharded_param() and makes
+      # later optimizer updates invisible to replay forward. Keep the action
+      # shards resident and continue offloading Adam state independently.
+      pin_trainable_param_storage: ${oc.env:COSMOS3_PIN_TRAINABLE_PARAM_STORAGE,true}
+      # cosmos_framework's inference.model.Cosmos3OmniModel forces this to
+      # "none" unconditionally (see cosmos_backend.py's
+      # _patch_cosmos_pre_fsdp_hooks docstring), since it assumes
+      # inference-only usage. RLinf's chain_logprob replay differentiates
+      # through the full diffusion chain and needs this back on to avoid
+      # holding every transformer block's activations across every step
+      # live for backward. "full"/"selective"/"none" -- see
+      # cosmos_framework's ActivationCheckpointingConfig.
+      activation_checkpointing: ${oc.env:COSMOS3_ACTIVATION_CHECKPOINTING,full}
+      allow_guardrail_download: ${oc.env:COSMOS3_ALLOW_GUARDRAIL_DOWNLOAD,false}
+      vlm_processor_from_checkpoint: ${oc.env:COSMOS3_VLM_PROCESSOR_FROM_CHECKPOINT,true}
+      chain_logprob: true
+      # joint_sum: historical Cosmos full-chain product; joint_mean: RLinf
+      # joint_logprob=True; single_step: RLinf joint_logprob=False.
+      chain_logprob_mode: ${oc.env:COSMOS3_CHAIN_LOGPROB_MODE,joint_sum}
+      chain_sigma: ${oc.env:COSMOS3_CHAIN_SIGMA,0.2}
+      chain_sigma_min: ${oc.env:COSMOS3_CHAIN_SIGMA_MIN,1e-4}
+      eager_load_trainable_state: true
+      trainable_param_patterns:
+      - action_proj_in.*
+      - action_proj_out.*
+      - action_modality_embed
+      - layers.*.input_layernorm_moe_gen.*
+      - layers.*.mlp_moe_gen.*
+      - layers.*.post_attention_layernorm_moe_gen.*
+    precision: bf16
+  optim:
+    lr: ${exp.optim.lr}
+    value_lr: 0.0001
+    adam_beta1: 0.9
+    adam_beta2: 0.95
+    adam_eps: 1.0e-08
+    weight_decay: ${exp.optim.weight_decay}
+    clip_grad: ${exp.optim.clip_grad}
+  fsdp_config:
+    strategy: native
+    sharding_strategy: full_shard
+    cpu_offload: true
+    gradient_checkpointing: false
+    use_orig_params: true
+    mixed_precision:
+      param_dtype: ${actor.model.precision}
+      reduce_dtype: ${actor.model.precision}
+      buffer_dtype: ${actor.model.precision}
+reward:
+  source: ${oc.env:COSMOS_REWARD_SOURCE,video_similarity}
+  use_reward_model: false
+  video_similarity:
+    enabled: true
+    metric: neg_mse
+    # This repo's legacy default. user's reference self_feedback run used
+    # `aligned` (stitches all three Ctrl-World views into the Cosmos camera
+    # layout) -- override with reward.video_similarity.alignment_mode=aligned
+    # on the CLI if you want to match that setup exactly.
+    alignment_mode: legacy
+    camera_layout: droid
+    log_counterfactual_alignment: false
+    size:
+    - 192
+    - 320
+    range_policy: error
+  success_model:
+    type: ResnetRewModel
+    from_pretrained: ${oc.env:CTRL_WORLD_REWARD_MODEL_PATH,/path/to/shared/checkpoint/reward_model/outputs/close_laptop_resnet_rm_ep0_4_d405_0_rgb}
+    artifact_name: resnet_rm.pth
+    camera_key: observation.images.d405_0_rgb
+    ctrl_world_view_index: 0
+    input_view: main
+    input_size: [224, 224]
+    threshold: ${oc.decode:${oc.env:SUCCESS_REWARD_THRESHOLD,0.9}}
+    signal: first_success
+    reward_value: 1.0
+    inference_batch_size: ${oc.decode:${oc.env:SUCCESS_MODEL_BATCH_SIZE,64}}
+critic:
+  use_critic_model: false
+exp:
+  logging:
+    experiment_name: ctrl_world_close_laptop_grpo_cosmos_self_feedback
+  paths:
+    ctrl_world_repo_path: ${oc.env:CTRL_WORLD_PATH,Ctrl-World}
+    ctrl_world_ckpt_path: ${oc.env:CTRL_WORLD_CKPT_PATH,''}
+    ctrl_world_stat_path: ${oc.env:CTRL_WORLD_STAT_PATH,''}
+    initial_image_path: ${oc.env:INITIAL_IMAGE_PATH,''}
+    initial_joint_state_path: ${oc.env:INITIAL_JOINT_STATE_PATH,''}
+    reward_model_path: ${oc.env:CTRL_WORLD_REWARD_MODEL_PATH,''}
+    policy_model_path: ${oc.env:COSMOS3_CHECKPOINT_PATH,''}
+    norm_stats_path: ${oc.env:NORM_STATS_PATH,''}
+    action_to_eef_adapter_path: ${oc.env:ACTION_TO_EEF_ADAPTER_PATH,''}
+    joint_action_to_state_adapter_path: ${oc.env:JOINT_ACTION_TO_STATE_ADAPTER_PATH,''}
+  training:
+    total_num_envs: ${oc.env:TOTAL_ENVS,32}
+    group_size: ${oc.env:GROUP_SIZE,8}
+    max_episode_steps: ${oc.decode:${oc.env:MAX_EPISODE_STEPS,480}}
+    max_steps_per_rollout_epoch: ${oc.decode:${oc.env:MAX_EPISODE_STEPS,480}}
+  evaluation:
+    total_num_envs: 1
+    group_size: 1
+    max_episode_steps: ${oc.decode:${oc.env:EVAL_MAX_EPISODE_STEPS,480}}
+    max_steps_per_rollout_epoch: ${oc.decode:${oc.env:EVAL_MAX_EPISODE_STEPS,480}}
+  ctrl_world:
+    num_inference_steps: ${oc.env:NUM_INFERENCE_STEPS,20}
+    decode_chunk_size: ${oc.env:CHUNK_SIZE,16}
+    frame_level_cond: ${oc.env:CTRL_WORLD_FRAME_LEVEL_COND,true}
+    his_cond_zero: ${oc.env:CTRL_WORLD_HIS_COND_ZERO,false}
+    policy_action_type: ${oc.env:POLICY_ACTION_TYPE,delta_eef}
+    policy_gripper_type: ${oc.env:POLICY_GRIPPER_TYPE,passthrough}
+    joint_action_adapter: ${oc.env:JOINT_ACTION_ADAPTER,none}
+    joint_fk_tcp_xyz: [0.0, 0.0, 0.18]
+    joint_fk_tcp_rotvec: [0.0, 0.0, 0.0]
+    action_to_eef_adapter: ${oc.env:ACTION_TO_EEF_ADAPTER,analytic_ur5_rot6d}
+    adapter_translation_gain: ${oc.env:CTRL_WORLD_TRANSLATION_GAIN,0.15}
+    adapter_rotation_gain: ${oc.env:CTRL_WORLD_ROTATION_GAIN,1.0}
+    adapter_translation_frame: ${oc.env:CTRL_WORLD_TRANSLATION_FRAME,body}
+    adapter_translation_sign: ${oc.env:CTRL_WORLD_TRANSLATION_SIGN,1.0}
+    adapter_rotation_mode: ${oc.env:CTRL_WORLD_ROTATION_MODE,body}
+    # Match the standalone Ctrl-World reference: request five frames, emit
+    # four, and feed the fifth latent/condition into the next internal window.
+    ctrl_world_internal_rollout: ${oc.env:CTRL_WORLD_INTERNAL_ROLLOUT,true}
+    ctrl_world_window_frames: ${oc.env:CTRL_WORLD_WINDOW_FRAMES,5}
+    ctrl_world_window_emit_frames: ${oc.env:CTRL_WORLD_WINDOW_EMIT_FRAMES,4}
+    ctrl_world_window_use_lookahead_latent: ${oc.env:CTRL_WORLD_WINDOW_USE_LOOKAHEAD_LATENT,true}
+    ctrl_world_window_history_mode: ${oc.env:CTRL_WORLD_WINDOW_HISTORY_MODE,sparse_window}
+    adapter_gripper_hard_clamp: ${oc.env:CTRL_WORLD_GRIPPER_CLIP,true}
+    adapter_gripper_hard_mode: ${oc.env:CTRL_WORLD_GRIPPER_MODE,clip_only}
+    action_to_eef_adapter_path: ${exp.paths.action_to_eef_adapter_path}
+    joint_action_to_state_adapter_path: ${exp.paths.joint_action_to_state_adapter_path}
+    reward_model: null
+  optim:
+    micro_batch_size: ${oc.env:MICRO_BATCH_SIZE,1}
+    global_batch_size: ${oc.env:GLOBAL_BATCH_SIZE,2}
+    num_steps: ${oc.env:COSMOS3_NUM_STEPS,20}

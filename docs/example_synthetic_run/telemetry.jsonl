@@ -1,0 +1,4 @@
+{"cgroup_memory_current": null, "cgroup_memory_max": null, "disk_free_bytes": 224526532608, "phase": "before_rollout", "pid": 305991, "rss_max_kib": 243840, "time_unix": 1790025157.3813946, "update": 1}
+{"cgroup_memory_current": null, "cgroup_memory_max": null, "disk_free_bytes": 224526204928, "phase": "update_boundary", "pid": 305991, "rss_max_kib": 261120, "time_unix": 1790025159.4735072, "update": 1}
+{"cgroup_memory_current": null, "cgroup_memory_max": null, "disk_free_bytes": 224526180352, "phase": "before_rollout", "pid": 305991, "rss_max_kib": 261120, "time_unix": 1790025159.4739566, "update": 2}
+{"cgroup_memory_current": null, "cgroup_memory_max": null, "disk_free_bytes": 224526049280, "phase": "update_boundary", "pid": 305991, "rss_max_kib": 262656, "time_unix": 1790025161.5971575, "update": 2}

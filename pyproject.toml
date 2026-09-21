@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rlinf-modified"
+version = "0.1.0"
+description = "Standalone Cosmos/Ctrl-World FPO-GRPO training runtime"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "RLinf modified maintainers" }]
+dependencies = [
+  "numpy==2.4.6",
+  "PyYAML==6.0.3",
+  "torch==2.10.0",
+]
+
+[project.optional-dependencies]
+real = [
+  "ray[default]==2.56.0",
+  "hydra-core==1.3.3",
+  "omegaconf==2.3.0",
+  "transformers==4.57.6",
+  "diffusers==0.36.0",
+  "accelerate==1.12.0",
+  "safetensors==0.7.0",
+  "einops==0.8.2",
+  "pandas==2.3.3",
+  "pyarrow==22.0.0",
+  "Pillow==12.2.0",
+  "scipy==1.17.0",
+]
+dev = [
+  "pytest==9.0.2",
+  "pytest-cov==7.0.0",
+  "ruff==0.14.14",
+]
+
+[project.scripts]
+rlinf-modified = "rlinf_modified.train:main"
+rlinf-submit = "rlinf_modified.launch:main"
+rlinf-analyze = "rlinf_modified.analysis:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "-ra"
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

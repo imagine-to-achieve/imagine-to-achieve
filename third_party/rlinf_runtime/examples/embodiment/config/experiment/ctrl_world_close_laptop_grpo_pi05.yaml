@@ -1,0 +1,58 @@
+logging:
+  experiment_name: "ctrl_world_close_laptop_grpo_openpi_pi05"
+
+paths:
+  ctrl_world_repo_path: "${oc.env:CTRL_WORLD_REPO_PATH}"
+  ctrl_world_ckpt_path: "${oc.env:CTRL_WORLD_CKPT_PATH}"
+  ctrl_world_stat_path: "${oc.env:CTRL_WORLD_STAT_PATH}"
+  initial_image_path: "${oc.env:INITIAL_IMAGE_PATH,/path/to/shared/datasets/close_desktop_lerobot_joint_3cam}"
+  initial_joint_state_path: "${oc.env:INITIAL_JOINT_STATE_PATH}"
+  reward_model_path: "${oc.env:REWARD_MODEL_PATH}"
+  policy_model_path: "${oc.env:POLICY_MODEL_PATH}"
+  norm_stats_path: "${oc.env:NORM_STATS_PATH}"
+  action_to_eef_adapter_path: "${oc.env:ACTION_TO_EEF_ADAPTER_PATH}"
+
+training:
+  max_epochs: 1000
+  total_num_envs: 16
+  group_size: 8
+  max_episode_steps: 480
+  max_steps_per_rollout_epoch: 480
+  rollout_epoch: 1
+  update_epoch: 1
+
+evaluation:
+  total_num_envs: 16
+  group_size: 1
+  max_episode_steps: 480
+  max_steps_per_rollout_epoch: 480
+  rollout_epoch: 1
+
+rollout:
+  video_fps: 7
+
+ctrl_world:
+  num_inference_steps: 50
+  decode_chunk_size: 12
+  policy_image_size: [480, 640]
+  frame_level_cond: True
+  his_cond_zero: False
+  policy_action_type: joint_absolute
+  policy_gripper_type: passthrough
+  joint_action_adapter: fk
+  joint_fk_tcp_xyz: [0.0, 0.0, 0.18]
+  joint_fk_tcp_rotvec: [0.0, 0.0, 0.0]
+  action_to_eef_adapter: joint_learned_fk
+  action_to_eef_adapter_path: ${exp.paths.action_to_eef_adapter_path}
+  reward_model:
+    type: ResnetRewModel
+    from_pretrained: ${exp.paths.reward_model_path}
+
+optim:
+  micro_batch_size: 8
+  global_batch_size: 128
+  seed: 42
+  num_steps: 3
+  lr: 5.0e-6
+  weight_decay: 0.01
+  clip_grad: 1.0

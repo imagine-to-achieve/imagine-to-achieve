@@ -1,0 +1,22 @@
+defaults:
+  - ctrl_world_duck4color_grpo_cosmos_fpo_native_unipc_b512_cosmos_split_v2
+  - _self_
+
+# One-update diagnostic profile: Ctrl-World uses the requested 50 denoise
+# steps, and only globally selected MSE-extreme trajectories are encoded.
+env:
+  train:
+    ctrl_world_cfg:
+      num_inference_steps: 50
+    video_cfg:
+      save_success_failure_mse_extremes: true
+      global_mse_extremes_only: true
+      fps: 15
+      mse_extremes_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos/train/mse_extremes
+  eval:
+    ctrl_world_cfg:
+      num_inference_steps: 50
+
+exp:
+  ctrl_world:
+    num_inference_steps: 50

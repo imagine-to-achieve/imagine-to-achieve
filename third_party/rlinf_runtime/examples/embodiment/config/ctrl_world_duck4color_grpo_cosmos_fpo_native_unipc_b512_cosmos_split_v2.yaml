@@ -1,0 +1,484 @@
+defaults:
+  - ctrl_world_close_laptop_grpo_cosmos_fpo_native_unipc_large
+  - _self_
+
+# Independent Cosmos-authoritative b512 four-color duck FPO contract. Task-specific values are deliberately explicit
+# so the close-laptop parent remains untouched and cannot silently leak its
+# reset IDs, prompt, checkpoints, or reward classifier into this run.
+cluster:
+  num_nodes: 8
+
+runner:
+  logger:
+    log_path: /path/to/workspace/rlinf-cosmos3-ctrl-world-fpo50-native-unipc-20260803/logs
+    experiment_name: cosmos_fpo_duck4color_actions_only_native_unipc_qnorm_c32_b512_mb128_g16_32groups_x4_cosmos160_val40_shift10_seg5_50step_seed42
+    logger_backends: [tensorboard]
+  max_epochs: 50
+  max_steps: 50
+  stop_after_updates: 0
+  # The updated policy is evaluated synchronously every five actor updates.
+  val_check_interval: 5
+  save_interval: 5
+  checkpoint_milestone_interval: 5
+  checkpoint_keep_latest_recovery: 1
+  rollout_only: false
+  only_eval: false
+  status_file: ${runner.logger.log_path}/${runner.logger.experiment_name}/status.json
+  success_file: ${runner.logger.log_path}/${runner.logger.experiment_name}/SUCCESS
+  first_update_smoke:
+    enabled: true
+    # Acceptance is no-OOM; peak reserved fraction remains an audited metric.
+    enforce_peak_memory_limit: false
+    max_peak_memory_fraction: 0.9
+    expected_optimizer_steps_per_update: 4
+    required_actor_metrics:
+      - actor/total_loss
+      - actor/grad_norm
+      - action/ratio_mean
+      - actor/optimizer_steps_per_update
+      - hardware/gpu_peak_reserved_fraction_max
+
+algorithm:
+  group_size: 16
+  rollout_epoch: 4
+  update_epoch: 1
+  gamma: 0.95
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.2
+  trajectory_aware_minibatches: true
+  trajectory_chunks: 5
+  expected_optimizer_steps_per_update: 4
+  trajectory_records:
+    enabled: true
+    output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/trajectory_records
+    expected_trajectories: 512
+    trajectory_frames: 160
+    checkpoint_checksum_manifest: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/checkpoint_checksums.json
+    input_audit: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/input_audit.json
+    run_manifest: ${runner.logger.log_path}/${runner.logger.experiment_name}/run_manifest.json
+    terminal_goal_metadata: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/terminal_goal_reference/metadata.json
+    seed_manifest_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/seed_manifests
+    split_manifest: /path/to/workspace/rlinf-cosmos3-ctrl-world-fpo50-native-unipc-20260803/configs/duck/duck_cosmos_split_manifest.json
+    strict_episode_allowlist: true
+  cross_rank_group:
+    enabled: true
+    members_per_rank: 4
+    rank_layout: contiguous
+    gather_backend: actor_world
+    seed_base: 42
+    per_member_vision_seed: true
+    semantic_topology_v2: true
+    logical_rounds_per_update: 4
+    group_slots_per_logical_round: 8
+    waves_per_logical_round: 1
+    chunks_per_trajectory: 5
+    expected_trajectories_per_update: 512
+    # The manifest allowlist takes precedence over this enclosing range.
+    reset_episode_min: 0
+    reset_episode_max: 199
+    reset_episode_allowlist_manifest: ${algorithm.trajectory_records.split_manifest}
+    reset_episode_allowlist_key: training.episodes
+    episodes_per_color_per_update: 8
+    color_order: [brown, red, white, yellow]
+    sample_without_replacement: true
+    reshuffle_on_exhaustion: true
+    fixed_ctrl_seed: 42
+    seed_derivation_version: blake2b-int63-v2
+
+env:
+  train:
+    total_num_envs: 128
+    group_size: 4
+    max_episode_steps: 160
+    max_steps_per_rollout_epoch: 160
+    episode_manifest_path: ${algorithm.trajectory_records.split_manifest}
+    episode_manifest_split: training
+    strict_episode_allowlist: true
+    initial_image_dataset_type: lerobot_book
+    initial_image_camera_keys:
+      - observation.images.d405_rgb
+      - observation.images.d405_1_rgb
+      - observation.images.d435_rgb
+    exclude_reset_ids: [6, 7, 14, 20, 32, 35, 38, 39, 41, 47, 55, 57, 73, 75, 77, 79, 81, 85, 87, 97, 100, 102, 109, 112, 117, 118, 129, 133, 138, 141, 152, 157, 162, 165, 167, 172, 184, 189, 190, 199]
+    use_ordered_reset_state_ids: false
+    random_reset_state_ids: false
+    auto_reset: false
+    ignore_terminations: true
+    initial_frame_index: 0
+    terminal_goal_frame_index: -1
+    terminal_goal_same_episode: true
+    ctrl_world_repo_path: ${exp.paths.ctrl_world_repo_path}
+    ctrl_world_ckpt_path: ${exp.paths.ctrl_world_ckpt_path}
+    ctrl_world_svd_model_path: ${exp.paths.svd_path}
+    ctrl_world_clip_model_path: ${exp.paths.clip_path}
+    ctrl_world_stat_path: ${exp.paths.ctrl_world_stat_path}
+    initial_image_path: ${exp.paths.initial_image_path}
+    initial_joint_state_path: ${exp.paths.initial_joint_state_path}
+    ctrl_world_reward_model_path: ${exp.paths.reward_model_path}
+    # JSONL records and the analysis suite are the audited diagnostics.
+    # Do not inherit the close-laptop run's 128 streamed comparison videos.
+    video_cfg:
+      save_video: false
+      save_all_trajectories: false
+      stream_all_cosmos_comparison: false
+      save_best_rollout: false
+      save_worst_rollout: false
+    self_feedback:
+      enabled: true
+      source: imagined_video_chunk
+      frame_index: -1
+      target_size: [720, 640]
+      strict: true
+    ctrl_world_cfg:
+      num_inference_steps: 50
+      guidance_scale: 1.0
+      decode_chunk_size: 7
+      image_size: [192, 320]
+      policy_image_size: [192, 320]
+      use_raw_reset_policy_views: true
+      per_view_vae_codec: true
+      # Checkpoint training order: wrist d435, front d405, right/side d405_1.
+      model_camera_ids: [2, 0, 1]
+      model_view_order: [wrist:d435, front:d405, right:d405_1]
+      # Cosmos emits already-denormalized metric-metre translation deltas.
+      adapter_translation_gain: 1.0
+      prompt_override: null
+      prompt_from_episode: true
+      chunk: 32
+      fps: 30
+      cosmos_action_fps: 15
+      ctrl_condition_fps: 30
+      action_fps_resample: true
+      action_stride: 1
+      coupling: actions_only
+      feedback_source: cosmos
+      ctrl_world_internal_rollout: true
+      ctrl_world_window_frames: 5
+      ctrl_world_window_emit_frames: 4
+      ctrl_world_window_use_lookahead_latent: true
+      ctrl_world_window_history_mode: dense
+      reward_model_diagnostic_only: true
+      reward_models: ${reward.success_models}
+      reward_model:
+        type: ColorRoutedResnetRewModel
+        checkpoints:
+          brown: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/brown/job1459059_0/resnet_rm.pth
+          red: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/red/job1459059_1/resnet_rm.pth
+          white: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/white/job1459059_2/resnet_rm.pth
+          yellow: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/yellow/job1459059_3/resnet_rm.pth
+        camera_key: observation.images.d405_1_rgb
+        ctrl_world_view_index: 2
+        require_camera_metadata: true
+        input_size: [224, 224]
+        inference_batch_size: 64
+      main_view_index: 1
+      wrist_view_index: 0
+      side_view_index: 2
+      camera_keys:
+        main: observation.images.d405_rgb
+        wrist: observation.images.d435_rgb
+        side: observation.images.d405_1_rgb
+      common_random_numbers_within_group: true
+      common_noise_seed: 42
+      per_member_vision_seed: true
+  eval:
+    total_num_envs: 40
+    group_size: 1
+    enable_offload: true
+    specific_reset_id: [6, 7, 14, 20, 32, 35, 38, 39, 41, 47, 55, 57, 73, 75, 77, 79, 81, 85, 87, 97, 100, 102, 109, 112, 117, 118, 129, 133, 138, 141, 152, 157, 162, 165, 167, 172, 184, 189, 190, 199]
+    episode_manifest_path: ${algorithm.trajectory_records.split_manifest}
+    episode_manifest_split: evaluation
+    strict_episode_allowlist: true
+    initial_image_dataset_type: lerobot_book
+    initial_image_camera_keys:
+      - observation.images.d405_rgb
+      - observation.images.d405_1_rgb
+      - observation.images.d435_rgb
+    seed: 42
+    max_episode_steps: 160
+    max_steps_per_rollout_epoch: 160
+    auto_reset: false
+    ignore_terminations: true
+    is_eval: true
+    initial_frame_index: 0
+    terminal_goal_frame_index: -1
+    terminal_goal_same_episode: true
+    ctrl_world_repo_path: ${exp.paths.ctrl_world_repo_path}
+    ctrl_world_ckpt_path: ${exp.paths.ctrl_world_ckpt_path}
+    ctrl_world_svd_model_path: ${exp.paths.svd_path}
+    ctrl_world_clip_model_path: ${exp.paths.clip_path}
+    ctrl_world_stat_path: ${exp.paths.ctrl_world_stat_path}
+    initial_image_path: ${exp.paths.initial_image_path}
+    initial_joint_state_path: ${exp.paths.initial_joint_state_path}
+    self_feedback:
+      enabled: true
+      source: imagined_video_chunk
+      frame_index: -1
+      target_size: [720, 640]
+      strict: true
+    ctrl_world_cfg:
+      num_inference_steps: 50
+      guidance_scale: 1.0
+      decode_chunk_size: 7
+      image_size: [192, 320]
+      policy_image_size: [192, 320]
+      use_raw_reset_policy_views: true
+      per_view_vae_codec: true
+      # Checkpoint training order: wrist d435, front d405, right/side d405_1.
+      model_camera_ids: [2, 0, 1]
+      model_view_order: [wrist:d435, front:d405, right:d405_1]
+      # Cosmos emits already-denormalized metric-metre translation deltas.
+      adapter_translation_gain: 1.0
+      prompt_override: null
+      prompt_from_episode: true
+      chunk: 32
+      fps: 30
+      cosmos_action_fps: 15
+      ctrl_condition_fps: 30
+      action_fps_resample: true
+      action_stride: 1
+      coupling: actions_only
+      feedback_source: cosmos
+      ctrl_world_internal_rollout: true
+      ctrl_world_window_frames: 5
+      ctrl_world_window_emit_frames: 4
+      ctrl_world_window_use_lookahead_latent: true
+      ctrl_world_window_history_mode: dense
+      reward_model_diagnostic_only: true
+      reward_models: ${reward.success_models}
+      reward_model:
+        type: ColorRoutedResnetRewModel
+        checkpoints:
+          brown: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/brown/job1459059_0/resnet_rm.pth
+          red: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/red/job1459059_1/resnet_rm.pth
+          white: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/white/job1459059_2/resnet_rm.pth
+          yellow: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/yellow/job1459059_3/resnet_rm.pth
+        camera_key: observation.images.d405_1_rgb
+        ctrl_world_view_index: 2
+        require_camera_metadata: true
+        input_size: [224, 224]
+        inference_batch_size: 64
+      main_view_index: 1
+      wrist_view_index: 0
+      side_view_index: 2
+      camera_keys:
+        main: observation.images.d405_rgb
+        wrist: observation.images.d435_rgb
+        side: observation.images.d405_1_rgb
+
+actor:
+  micro_batch_size: 1
+  # Five chunks per trajectory: 64 trajectory minibatch x 5 = 320 chunks.
+  global_batch_size: 640
+  seed: 42
+  model:
+    model_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_duck_0731_4color_160train_40val_15k/checkpoints/iter_000010000/model
+    num_action_chunks: 32
+    action_dim: 10
+    num_steps: 15
+    cosmos:
+      framework_path: /path/to/workspace/cosmos3_model/cosmos_trainner_modified
+      vlm_processor_path: /path/to/workspace/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+      checkpoint_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_duck_0731_4color_160train_40val_15k/checkpoints/iter_000010000/model
+      checkpoint_config_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_duck_0731_4color_160train_40val_15k/config.yaml
+      action_stats_path: /path/to/workspace/check-point/cosmos3_new/action_stats/action_policy_ur5_eef_duck_0731_4color_160train_40val_15k_action_stats.json
+      action_normalization: qnorm
+      action_representation: ur5_eef_relative_10d_droid_native
+      action_chunk_size: 32
+      raw_action_dim: 10
+      max_action_dim: 64
+      domain_name: robomind-ur
+      prompt: Pick up the duck and put it into the black box.
+      force_config_prompt: false
+      group_member_seed_stride: 0
+      sampling_call_seed_stride: 0
+      prompt_by_color:
+        brown: Pick up the brown duck and put it into the black box.
+        red: Pick up the red duck and put it into the black box.
+        white: Pick up the white duck and put it into the black box.
+        yellow: Pick up the yellow duck and put it into the black box.
+      sampler: unipc
+      sampler_family: ODE
+      num_steps: 15
+      guidance: 3.0
+      fps: 15
+      resolution_tier: 720
+      replay_objective: fpo_action_head
+      rollout_transition_mode: native_unipc_surrogate
+      replay_eval_mode: true
+      actor_replay_recompute_prev_logprobs: true
+      fpo_num_mc_samples: 4
+      fpo_time_distribution: waver
+      shift: 10.0
+      fpo_training_shift: 10.0
+      fpo_timestep_scale: 1000.0
+      freeze_video_path: true
+      train_action_path_only: true
+      training_mode: action_only_grpo
+  optim:
+    lr: 2.0e-6
+
+reward:
+  source: video_similarity
+  use_reward_model: false
+  video_similarity:
+    enabled: true
+    metric: neg_mse
+    alignment_mode: aligned
+    camera_layout: droid
+    size: [192, 320]
+    range_policy: error
+    reward_scale: 1.0
+  terminal_goal:
+    enabled: true
+    reference_mode: same_episode_last_frame
+    per_episode: true
+    strict_same_episode: true
+    dataset_path: /path/to/shared/datasets/duck_0731
+    dataset_episode_index: -1
+    dataset_frame_index: -1
+    dataset_camera_keys:
+      main: observation.images.d435_rgb
+      wrist: observation.images.d405_rgb
+      extra: observation.images.d405_1_rgb
+    ctrl_world_source_mapping:
+      main: wrist
+      wrist: main
+      extra: extra
+    window_size: 4
+    size: [192, 320]
+    range_policy: error
+    view_weights:
+      main: 0.6666666666666666
+      wrist: 0.16666666666666666
+      extra: 0.16666666666666666
+    reward_scale: 160.0
+    reference_output_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/inputs/terminal_goal_reference
+  success_classifier:
+    enabled: true
+    diagnostic_only: true
+    replace_training_reward: false
+    input_view: d405_1
+    ctrl_world_view_index: 2
+    window_size: 4
+    aggregation: max
+    threshold: 0.5
+  # Keep a singular model for backward-compatible construction. Runtime duck
+  # routing uses success_models and never mixes colors in one classifier.
+  success_model:
+    type: ResnetRewModel
+    from_pretrained: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/brown/job1459059_0/resnet_rm.pth
+    artifact_name: resnet_rm.pth
+    camera_key: observation.images.d405_1_rgb
+    ctrl_world_view_index: 2
+    input_view: side
+    input_size: [224, 224]
+    threshold: 0.5
+    signal: probability
+    inference_batch_size: 64
+  success_models:
+    brown:
+      from_pretrained: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/brown/job1459059_0/resnet_rm.pth
+      artifact_name: resnet_rm.pth
+      sha256: 04bfb6fcac04252f4dad4832d272194d8a6bd38513cf2521e873a32e7c4a72b8
+    red:
+      from_pretrained: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/red/job1459059_1/resnet_rm.pth
+      artifact_name: resnet_rm.pth
+      sha256: f93c74954956cdb079a5f8e3136da1cdeffc59d274e5b97ed91deb226d2c361e
+    white:
+      from_pretrained: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/white/job1459059_2/resnet_rm.pth
+      artifact_name: resnet_rm.pth
+      sha256: 7650c52b7b6689991d06c416f01b6c9562c9573ce794d699a2d05f7536e018d4
+    yellow:
+      from_pretrained: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/yellow/job1459059_3/resnet_rm.pth
+      artifact_name: resnet_rm.pth
+      sha256: 17765fdeb74570bcd2c3402210c1df2e04b6548af983ee42a4f725f762916b98
+
+exp:
+  paths:
+    ctrl_world_repo_path: /path/to/workspace/Ctrl-World
+    ctrl_world_ckpt_path: /path/to/workspace/ctrl-world-train/model_ckpt/ctrl_world_duck0731_3cam_native30fps_finetune_10k/weights-100000.pt
+    ctrl_world_stat_path: /path/to/workspace/ctrl-world-train/dataset_meta_info/ctrl_world_duck_0731_3cam/stat.json
+    initial_image_path: /path/to/shared/datasets/duck_0731
+    initial_joint_state_path: /path/to/shared/datasets/duck_0731
+    reward_model_path: /path/to/shared/checkpoint/reward_model/outputs/duck_threeway_soft_boundary_rm/brown/job1459059_0/resnet_rm.pth
+    policy_model_path: ${actor.model.model_path}
+    svd_path: /path/to/workspace/Ctrl-World/checkpoints/pre_trained/stable-video-diffusion-img2vid
+    clip_path: /path/to/workspace/Ctrl-World/checkpoints/pre_trained/clip-vit-base-patch32
+  training:
+    max_epochs: 50
+    total_num_envs: 128
+    group_size: 16
+    max_episode_steps: 160
+    max_steps_per_rollout_epoch: 160
+    rollout_epoch: 4
+    update_epoch: 1
+  evaluation:
+    total_num_envs: 40
+    group_size: 1
+    max_episode_steps: 160
+    max_steps_per_rollout_epoch: 160
+    rollout_epoch: 1
+  ctrl_world:
+    num_inference_steps: 50
+    guidance_scale: 1.0
+    action_stride: 1
+  optim:
+    micro_batch_size: 1
+    global_batch_size: 640
+    seed: 42
+    num_steps: 15
+    lr: 2.0e-6
+
+duck:
+  enabled: true
+  split_manifest: /path/to/workspace/rlinf-cosmos3-ctrl-world-fpo50-native-unipc-20260803/configs/duck/duck_cosmos_split_manifest.json
+  colors: [brown, red, white, yellow]
+  topology:
+    nodes: 8
+    gpus_per_node: 4
+    total_gpus: 32
+  training:
+    split: training
+    episodes_per_color_per_update: 8
+    groups_per_update: 32
+    group_size: 16
+    base_seed: 42
+    seed_derivation_version: blake2b-int63-v2
+    sample_without_replacement: true
+    reshuffle_on_exhaustion: true
+    initial_frame_index: 0
+    terminal_goal_frame_index: -1
+  evaluation:
+    enabled: true
+    split: evaluation
+    episode_ids: [6, 7, 14, 20, 32, 35, 38, 39, 41, 47, 55, 57, 73, 75, 77, 79, 81, 85, 87, 97, 100, 102, 109, 112, 117, 118, 129, 133, 138, 141, 152, 157, 162, 165, 167, 172, 184, 189, 190, 199]
+    synchronous_after_update: true
+    trajectories_per_episode: 1
+    record_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/evaluation_records
+    record_path_template: step_{update_index}.jsonl
+    update_index_origin: 0
+    analysis_step_origin: 1
+    seed_base: 42
+    seed_formula: seed_base + evaluation_count * update_index + sorted_episode_index
+    expected_records_per_step: 40
+    fail_on_incomplete: true
+    isolate_from_training_rng: true
+    exclude_from_training: true
+    interval_updates: 5
+  analysis:
+    enabled: true
+    command: /path/to/workspace/rlinf-cosmos3-ctrl-world-fpo50-native-unipc-20260803/toolkits/duck_fpo_analysis/analyze_run.py
+    output_root: /path/to/workspace/rlinf-cosmos3-ctrl-world-fpo50-native-unipc-20260803/analysis_outputs/${runner.logger.experiment_name}
+    run_after_every_update: true
+    interval_updates: 5
+    train_series: train_pre_update
+    eval_series: eval_post_update
+    success_thresholds: [0.5, 0.01]
+    success_window: 4
+    correlation_scope: combined_step
+    preserve_series_columns: true
+    atomic_publish: true
+    fail_on_evaluation_error: true
+    fail_on_plot_error: false
+    rebuild_on_resume: true

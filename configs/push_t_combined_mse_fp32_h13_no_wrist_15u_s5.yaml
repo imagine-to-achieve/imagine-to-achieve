@@ -1,0 +1,252 @@
+# Physical trajectory keys: main=front d405, wrist=d435, side=d405_1.
+# Terminal legacy tuple order: [wrist, main, side].
+schema_version: 1
+experiment_name: push_t_combined_mse_fp32_h13_no_wrist_15u_s5
+runtime:
+  backend: ray_fsdp
+  seed: 42
+  dtype: bfloat16
+  max_updates: 15
+  segment_updates: 5
+  continuous_stress: false
+  output_dir: /path/to/rlinf_release/outputs/push_t_combined_mse_fp32_h13_no_wrist_15u_s5
+  resume: false
+  require_real_assets: false
+  deterministic: false
+  minimum_free_disk_gib: 0
+  minimum_free_inodes: 0
+  max_gpu_reserved_fraction: 0.9
+slurm:
+  account: <SLURM_ACCOUNT>
+  partition: gpu
+  nodes: 8
+  gpus_per_node: 4
+  ntasks_per_node: 1
+  cpus_per_task: 32
+  memory: 400G
+  time_limit: '24:00:00'
+  signal_seconds: 300
+batch:
+  parallel_envs: 128
+  rollout_epochs: 1
+  trajectories_per_update: 128
+  chunks_per_trajectory: 13
+  global_minibatch_chunks: 416
+  micro_batch_size_per_gpu: 1
+  gradient_accumulation_steps: 13
+  expected_optimizer_steps: 4
+  logical_rounds_per_update: 1
+  group_slots_per_logical_round: 8
+  waves_per_logical_round: 1
+task:
+  profile: push_t
+  mode: single_task
+  base_prompt: Push the T-shaped block onto the T-shaped target.
+  allowed_variants:
+  - push_t
+  active_variants:
+  - push_t
+  train_episodes_per_variant: 120
+  eval_episodes_per_variant: 30
+  append_viewpoint_info: true
+  append_duration_fps: true
+  append_resolution_info: true
+  rollout_cfg_dropout_rate: 0.0
+  camera_labels:
+  - main
+  - wrist
+  - extra
+  split_manifest_path: /path/to/rlinf_release/configs/push_t_split_manifest.json
+  variant_prompts:
+    push_t: Push the T-shaped block onto the T-shaped target.
+algorithm:
+  name: fpo_grpo
+  advantage: grpo_action_suffix
+  group_size: 16
+  gamma: 0.95
+  gae_lambda: null
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.2
+  normalize_advantages: true
+  logprob_level: chunk
+trajectory_records:
+  enabled: true
+  mode: lightweight_analysis
+  auto_analyze: false
+  require_plots: false
+fpo:
+  replay_objective: fpo_action_head
+  ratio_granularity: per_action
+  score_parameterization: velocity
+  num_mc_samples: 4
+  time_distribution: waver
+  training_shift: 10.0
+  timestep_scale: 1000.0
+  vision_state_channels: 48
+  vision_condition_latent_frames: 1
+  latent_downsample_factor: 16
+  freeze_video_path: true
+  train_action_path_only: true
+optimizer:
+  name: AdamW
+  lr: 2.0e-06
+  beta1: 0.9
+  beta2: 0.95
+  eps: 1.0e-08
+  weight_decay: 0.01
+  clip_grad_norm: 5.0
+cosmos:
+  framework_version: 1.2.2
+  data_parallel_shard_degree: 4
+  checkpoint_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_push_T_0807_filtered_avg010_3reset_120train_30val_10k/checkpoints/iter_000010000/model
+  checkpoint_config_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_push_T_0807_filtered_avg010_3reset_120train_30val_10k/config.yaml
+  action_stats_path: /path/to/workspace/check-point/cosmos3_new/action_stats/action_policy_ur5_eef_push_T_0807_filtered_avg010_3reset_120train_30val_10k_action_stats.json
+  vlm_processor_path: /path/to/home/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+  checkpoint_target_rewrite: true
+  strict_load: true
+  action_dim: 10
+  max_action_dim: 64
+  action_representation: ur5_eef_relative_10d_droid_native
+  action_normalization: qnorm
+  action_chunk: 32
+  action_fps: 15.0
+  sampler: unipc
+  sampler_steps: 15
+  guidance: 1.0
+  resolution_tier: 720
+ctrl_world:
+  architecture:
+    sample_size: null
+    in_channels: 8
+    out_channels: 4
+    down_block_types:
+    - CrossAttnDownBlockSpatioTemporal
+    - CrossAttnDownBlockSpatioTemporal
+    - CrossAttnDownBlockSpatioTemporal
+    - DownBlockSpatioTemporal
+    up_block_types:
+    - UpBlockSpatioTemporal
+    - CrossAttnUpBlockSpatioTemporal
+    - CrossAttnUpBlockSpatioTemporal
+    - CrossAttnUpBlockSpatioTemporal
+    block_out_channels:
+    - 320
+    - 640
+    - 1280
+    - 1280
+    addition_time_embed_dim: 256
+    projection_class_embeddings_input_dim: 768
+    layers_per_block: 2
+    cross_attention_dim: 1024
+    transformer_layers_per_block: 1
+    num_attention_heads:
+    - 5
+    - 10
+    - 20
+    - 20
+    num_frames: 25
+  runtime:
+    action_dim: 7
+    policy_action_dim: 10
+    num_history: 6
+    action_encoder_hidden_size: 1024
+    text_cond: true
+    frame_level_cond: true
+    his_cond_zero: false
+    policy_chunk: 32
+    policy_action_fps: 15.0
+    condition_fps: 30.0
+    resample_actions: true
+    resampled_chunk: 64
+    internal_rollout: true
+    window_frames: 5
+    window_emit_frames: 4
+    use_lookahead_latent: true
+    history_mode: sparse_window
+    history_indices:
+    - -7
+    - -6
+    - -5
+    - -4
+    - -3
+    - -2
+    history_bank_size: 24
+    num_inference_steps: 50
+    guidance_scale: 1.0
+    decode_chunk_size: 7
+    per_view_image_size:
+    - 192
+    - 320
+    per_view_vae_codec: true
+    action_to_eef_adapter: analytic_ur5_rot6d
+reward:
+  source: ctrl_world_aligned_mse_plus_terminal
+  video_similarity:
+    enabled: true
+    metric: negative_mse
+    alignment_mode: per_chunk
+    camera_layout: droid
+    size:
+    - 192
+    - 320
+    range_policy: zero_one
+    scale: 1.0
+    view_weights:
+      wrist: 0.0
+      main: 0.5
+      side: 0.5
+  terminal_goal:
+    enabled: true
+    same_episode: true
+    frame_index: -1
+    window_size: 4
+    size:
+    - 192
+    - 320
+    range_policy: zero_one
+    view_weights:
+    - 0.0
+    - 0.5
+    - 0.5
+    scale: 416.0
+  success_classifier:
+    enabled: true
+    diagnostic_only: true
+    replace_training_reward: false
+    threshold: 0.5
+    aggregation: max
+assets:
+  legacy_config_name: ctrl_world_nest_four_cups_grpo_cosmos_fpo_native_unipc_b512_recent_views
+  dataset_path: /path/to/shared/datasets/push_T_0807_filtered_avg010
+  ctrl_world_checkpoint: /path/to/shared/checkpoint/CtrlWorld/ctrl_world_push_T_selfcond/weights-100000.pt
+  ctrl_world_stats: /path/to/shared/checkpoint/CtrlWorld/ctrl_world_push_T_selfcond/dataset_meta/stat.json
+  svd_model_path: /path/to/workspace/Ctrl-World/checkpoints/pre_trained/stable-video-diffusion-img2vid
+  clip_model_path: /path/to/workspace/Ctrl-World/checkpoints/pre_trained/clip-vit-base-patch32
+  reward_models:
+    push_t: /path/to/shared/checkpoint/reward_model/outputs/push_T_resnet_rm_d405_rgb_v2/checkpoints/checkpoint_best.pt
+  expected_sha256: {}
+distributed:
+  backend: ray_fsdp
+  ray_object_store_bytes: 68719476736
+  ray_ready_timeout_seconds: 600
+  collective_timeout_seconds: 180
+  heartbeat_interval_seconds: 10
+  actor_offload: true
+  rollout_offload: true
+  replay_cpu_resident: true
+  activation_checkpointing: full
+  fsdp_use_orig_params: true
+evaluation:
+  enabled: true
+  interval_updates: 5
+  episodes_per_variant: 30
+  save_video: false
+  fixed_seeds: true
+  before_training: true
+checkpoint:
+  enabled: true
+  interval_updates: 1
+  keep_latest: 1
+  atomic: true
+  save_optimizer: true
+  emergency_on_signal: true

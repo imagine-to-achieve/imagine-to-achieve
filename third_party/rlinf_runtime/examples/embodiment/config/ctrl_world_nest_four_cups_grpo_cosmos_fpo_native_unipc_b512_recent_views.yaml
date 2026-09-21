@@ -1,0 +1,98 @@
+defaults:
+  - ctrl_world_nest_four_cups_grpo_cosmos_fpo_native_unipc_b512
+  - _self_
+
+# Opt-in Ctrl-World rollout matching the standalone recent-history bridge.
+# Source/disk order stays [front:d405, right:d405_1, wrist:d435]. The model
+# alone receives [wrist:d435, front:d405, right:d405_1]. Cosmos policy
+# self-feedback remains the last frame from imagined_video_chunk.
+runner:
+  logger:
+    experiment_name: nest_four_cups_b512_c10_recent_views_32n4g_u50_gs1
+
+env:
+  train:
+    self_feedback:
+      enabled: true
+      source: imagined_video_chunk
+      frame_index: -1
+    ctrl_world_cfg:
+      num_inference_steps: 50
+      ctrl_world_history_idx: [-7, -6, -5, -4, -3, -2]
+      ctrl_world_history_bank_size: 24
+      model_camera_ids: [2, 0, 1]
+      model_view_order: [wrist:d435, front:d405, right:d405_1]
+      main_view_index: 1
+      wrist_view_index: 0
+      side_view_index: 2
+      reward_model: ${reward.success_model}
+    video_cfg:
+      # Select by scalar success/MSE across all 512 trajectories first, then
+      # let only the four global extrema encode candidate videos.
+      global_mse_extremes_only: true
+  eval:
+    self_feedback:
+      enabled: true
+      source: imagined_video_chunk
+      frame_index: -1
+    ctrl_world_cfg:
+      num_inference_steps: 50
+      ctrl_world_history_idx: [-7, -6, -5, -4, -3, -2]
+      ctrl_world_history_bank_size: 24
+      model_camera_ids: [2, 0, 1]
+      model_view_order: [wrist:d435, front:d405, right:d405_1]
+      main_view_index: 1
+      wrist_view_index: 0
+      side_view_index: 2
+      reward_model: ${reward.success_model}
+
+reward:
+  video_similarity:
+    # droid means top=wrist, bottom-left=front, bottom-right=right.
+    camera_layout: droid
+  success_classifier:
+    enabled: true
+    diagnostic_only: true
+    replace_training_reward: false
+    input_view: d405
+    ctrl_world_view_index: 1
+    window_size: 4
+    aggregation: terminal_positive_ratio
+    threshold: 0.5
+    terminal_window_frames: 30
+    frame_stride: 3
+    probability_threshold: 0.5
+    minimum_terminal_positive_ratio: 0.8
+    requires_last_frame_positive: true
+  success_model:
+    type: ResnetRewModel
+    loader: rlinf_local
+    from_pretrained: /path/to/workspace/reward_model/outputs/nest_four_cups_resnet_d405_rgb_stride3/checkpoints
+    artifact_name: checkpoint_best.pt
+    camera_key: observation.images.d405_rgb
+    ctrl_world_view_index: 1
+    input_view: main
+    input_size: [224, 224]
+    input_range: minus_one_one
+    resize_antialias: true
+    frame_source: ctrl_world_native
+    threshold: 0.5
+    signal: probability
+    inference_batch_size: 64
+  success_models:
+    nest_four_cups:
+      from_pretrained: /path/to/workspace/reward_model/outputs/nest_four_cups_resnet_d405_rgb_stride3/checkpoints
+      artifact_name: checkpoint_best.pt
+      sha256: 9299e98f1a8a683eb822f7c0242599e28d1f1852d6ee167cce7a72b2d3898c42
+
+exp:
+  ctrl_world:
+    num_inference_steps: 50
+  paths:
+    reward_model_path: /path/to/workspace/reward_model/outputs/nest_four_cups_resnet_d405_rgb_stride3/checkpoints
+
+actor:
+  model:
+    cosmos:
+      # Explicit output/policy canvas: [wrist; front | right].
+      camera_layout: droid

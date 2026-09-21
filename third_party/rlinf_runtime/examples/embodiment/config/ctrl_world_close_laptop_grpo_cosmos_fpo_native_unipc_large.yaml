@@ -1,0 +1,33 @@
+defaults:
+  - ctrl_world_close_laptop_grpo_cosmos_native_unipc_large
+  - _self_
+
+# Production FPO variant: preserve the full native-UniPC/Ctrl-World contract
+# and replace only the actor replay score with the action-head FPO surrogate.
+runner:
+  logger:
+    log_path: /path/to/workspace/rlinf-cosmos3-ctrl-world-fpo50-native-unipc-20260803/logs
+    experiment_name: cosmos_fpo_actionhead_native_unipc_qnorm_c32_rerun2_iter500_g16_8groups_x4_mb128_4upd_gs1_seed42_last4_1to1_50step_mc4_clip02_seg5
+
+algorithm:
+  # FPO produces one scalar score per sampled action chunk. The backend
+  # distributes it over the 32x10 coordinates and this reduction sums it once.
+  logprob_type: chunk_level
+  clip_ratio_high: 0.2
+  clip_ratio_low: 0.2
+
+actor:
+  model:
+    cosmos:
+      replay_objective: fpo_action_head
+      rollout_transition_mode: native_unipc_surrogate
+      replay_eval_mode: true
+      actor_replay_recompute_prev_logprobs: true
+      fpo_num_mc_samples: 4
+      fpo_time_distribution: waver
+      fpo_training_shift: 10.0
+      fpo_timestep_scale: 1000.0
+      fpo_vision_state_channels: 48
+      fpo_vision_condition_latent_frames: 1
+      latent_downsample_factor: 16
+      cfg_branch_checkpointing: false

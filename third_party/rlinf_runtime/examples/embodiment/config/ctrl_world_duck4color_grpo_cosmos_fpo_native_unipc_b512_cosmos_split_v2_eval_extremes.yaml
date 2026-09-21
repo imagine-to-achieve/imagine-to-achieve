@@ -1,0 +1,26 @@
+defaults:
+  - ctrl_world_duck4color_grpo_cosmos_fpo_native_unipc_b512_cosmos_split_v2
+  - _self_
+
+# Standalone held-out checkpoint evaluation.  The runner exits after exactly
+# one post-update evaluation and never constructs a training environment or
+# enters the actor-update loop.
+runner:
+  only_eval: true
+
+env:
+  eval:
+    video_cfg:
+      save_video: false
+      save_cosmos_comparison: true
+      save_all_trajectories: true
+      camera_layout: droid
+      fps: 15
+      video_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos/eval/all_trajectories
+      comparison_subdir: cosmos_vs_ctrlworld
+
+duck:
+  evaluation:
+    save_success_failure_mse_extremes: true
+    require_all_mse_extreme_categories: true
+    mse_extremes_base_dir: ${runner.logger.log_path}/${runner.logger.experiment_name}/videos/eval/mse_extremes

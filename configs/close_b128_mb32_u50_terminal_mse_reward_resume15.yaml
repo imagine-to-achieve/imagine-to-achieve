@@ -1,0 +1,215 @@
+# Close reward ablation continuation: terminal-goal MSE only; resume global_step_15 and train through update 50.
+schema_version: 1
+experiment_name: close_b128_mb32_u15_terminal_mse_reward_8n4g
+runtime:
+  backend: ray_fsdp
+  seed: 42
+  dtype: bfloat16
+  max_updates: 50
+  segment_updates: 5
+  continuous_stress: false
+  output_dir: /path/to/rlinf_release/outputs/close_b128_mb32_u15_terminal_mse_reward_8n4g
+  resume: true
+  require_real_assets: true
+  deterministic: false
+  minimum_free_disk_gib: 120
+  minimum_free_inodes: 0  # inode gate disabled: not enforced on this filesystem.
+  max_gpu_reserved_fraction: 0.9
+slurm:
+  account: <SLURM_ACCOUNT>
+  partition: gpu
+  nodes: 8
+  gpus_per_node: 4
+  ntasks_per_node: 1
+  cpus_per_task: 32
+  memory: 400G
+  time_limit: "24:00:00"
+  signal_seconds: 300
+batch:
+  parallel_envs: 128
+  rollout_epochs: 1
+  trajectories_per_update: 128
+  chunks_per_trajectory: 5
+  global_minibatch_chunks: 160
+  micro_batch_size_per_gpu: 1
+  gradient_accumulation_steps: 5
+  expected_optimizer_steps: 4
+  logical_rounds_per_update: 1
+  group_slots_per_logical_round: 8
+  waves_per_logical_round: 1
+task:
+  profile: close
+  mode: single_task
+  base_prompt: Close the laptop
+  allowed_variants: [close]
+  active_variants: [close]
+  train_episodes_per_variant: 32
+  eval_episodes_per_variant: 8
+  append_viewpoint_info: true
+  append_duration_fps: true
+  append_resolution_info: true
+  rollout_cfg_dropout_rate: 0.0
+  camera_labels: [main, wrist, extra]
+  split_manifest_path: null
+  variant_prompts:
+    close: Close the laptop
+algorithm:
+  name: fpo_grpo
+  advantage: grpo_action_suffix
+  group_size: 16
+  gamma: 0.95
+  gae_lambda: null  # GRPO suffix recursion intentionally does not use GAE.
+  clip_ratio_low: 0.2
+  clip_ratio_high: 0.2
+  normalize_advantages: true
+  logprob_level: chunk
+trajectory_records:
+  enabled: true
+  mode: lightweight_analysis
+  auto_analyze: true
+  require_plots: true
+fpo:
+  replay_objective: fpo_action_head
+  ratio_granularity: per_action
+  score_parameterization: velocity
+  num_mc_samples: 4
+  time_distribution: waver
+  training_shift: 10.0
+  timestep_scale: 1000.0
+  vision_state_channels: 48
+  vision_condition_latent_frames: 1
+  latent_downsample_factor: 16
+  freeze_video_path: true
+  train_action_path_only: true
+optimizer:
+  name: AdamW
+  lr: 0.000002
+  beta1: 0.9
+  beta2: 0.95
+  eps: 0.00000001
+  weight_decay: 0.01
+  clip_grad_norm: 5.0
+cosmos:
+  framework_version: 1.2.2
+  data_parallel_shard_degree: 4
+  checkpoint_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_close_desktop_32train_8val_10k/checkpoints/iter_000000500/model
+  checkpoint_config_path: /path/to/workspace/check-point/cosmos3_new/cosmos3_action/action_sft_ur5_eef/action_policy_ur5_eef_close_desktop_32train_8val_10k/config.yaml
+  action_stats_path: /path/to/workspace/check-point/cosmos3_new/action_stats/action_policy_ur5_eef_close_desktop_32train_8val_10k_action_stats.json
+  vlm_processor_path: /path/to/workspace/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots/0c351dd01ed87e9c1b53cbc748cba10e6187ff3b
+  checkpoint_target_rewrite: true
+  strict_load: true
+  action_dim: 10
+  max_action_dim: 64
+  action_representation: ur5_eef_relative_10d_droid_native
+  action_normalization: qnorm
+  action_chunk: 32
+  action_fps: 15.0
+  sampler: unipc
+  sampler_steps: 15
+  guidance: 1.0
+  resolution_tier: 720
+ctrl_world:
+  architecture:
+    sample_size: null
+    in_channels: 8
+    out_channels: 4
+    down_block_types: [CrossAttnDownBlockSpatioTemporal, CrossAttnDownBlockSpatioTemporal, CrossAttnDownBlockSpatioTemporal, DownBlockSpatioTemporal]
+    up_block_types: [UpBlockSpatioTemporal, CrossAttnUpBlockSpatioTemporal, CrossAttnUpBlockSpatioTemporal, CrossAttnUpBlockSpatioTemporal]
+    block_out_channels: [320, 640, 1280, 1280]
+    addition_time_embed_dim: 256
+    projection_class_embeddings_input_dim: 768
+    layers_per_block: 2
+    cross_attention_dim: 1024
+    transformer_layers_per_block: 1
+    num_attention_heads: [5, 10, 20, 20]
+    num_frames: 25
+  runtime:
+    action_dim: 7
+    policy_action_dim: 10
+    num_history: 6
+    action_encoder_hidden_size: 1024
+    text_cond: true
+    frame_level_cond: true
+    his_cond_zero: false
+    policy_chunk: 32
+    policy_action_fps: 15.0
+    condition_fps: 30.0
+    resample_actions: true
+    resampled_chunk: 64
+    internal_rollout: true
+    window_frames: 5
+    window_emit_frames: 4
+    use_lookahead_latent: true
+    history_mode: sparse_window
+    history_indices: [0, 0, -12, -9, -6, -3]
+    history_bank_size: 24
+    num_inference_steps: 20
+    guidance_scale: 1.0
+    decode_chunk_size: 7
+    per_view_image_size: [192, 320]
+    per_view_vae_codec: true
+    action_to_eef_adapter: analytic_ur5_rot6d
+reward:
+  source: terminal_goal_mse
+  video_similarity:
+    enabled: true
+    metric: negative_mse
+    alignment_mode: per_chunk
+    camera_layout: droid
+    size: [192, 320]
+    range_policy: zero_one
+    scale: 1.0
+  terminal_goal:
+    enabled: true
+    same_episode: true
+    frame_index: -1
+    window_size: 4
+    size: [192, 320]
+    range_policy: zero_one
+    view_weights: [0.6666666666666666, 0.16666666666666666, 0.16666666666666666]
+    scale: 160.0
+  success_classifier:
+    enabled: true
+    diagnostic_only: true
+    replace_training_reward: false
+    threshold: 0.5
+    aggregation: max
+assets:
+  legacy_config_name: ctrl_world_close_laptop_grpo_cosmos_fpo_native_unipc_large
+  dataset_path: /path/to/shared/datasets/close_desktop_lerobot_joint_3cam
+  ctrl_world_checkpoint: /path/to/workspace/Ctrl-World/model_ckpt/ctrl_world_close_laptop_state_3cam_nojump_finetune_100k/checkpoint-100000.pt
+  ctrl_world_stats: /path/to/workspace/Ctrl-World/dataset_meta_info/ctrl_world_close_desktop_eef_state_3cam/stat.json
+  svd_model_path: /path/to/workspace/github/Ctrl-World/pretrained/stable-video-diffusion-img2vid
+  clip_model_path: /path/to/workspace/github/Ctrl-World/pretrained/clip-vit-base-patch32
+  reward_models:
+    close: /path/to/workspace/checkpoint/reward_model/outputs/close_laptop_resnet_rm_ep0_4_d405_0_rgb/resnet_rm.pth
+  expected_sha256:
+    cosmos_checkpoint: 11e970eaa88d9a0484e0e41828fa5a5a6e55fc2cb91d74a184a8ac2d7853f4c0
+    cosmos_checkpoint_config: 0e84c24fa93d750e096d804c928920cb82020e48a041e4963821189ff1b34feb
+    cosmos_action_stats: c26930443e8ce6c19eebd67d2593851a32cc03ef91f6dad455206773670dc152
+    ctrl_world_checkpoint: fb92fa8c25a78c3efbf5edda2854c98ca53edb4e5c23cd1d2bd0d750532e7129
+    ctrl_world_stats: b67e6eab431800568c935bb25d50156b7501652fea574b75378ab9ba4cb011f8
+    reward_model_close: 2db45451a4cb6fde7c5f3fe6aae0b5852560b026979287abcf5a9d779753c727
+distributed:
+  backend: ray_fsdp
+  ray_object_store_bytes: 68719476736
+  ray_ready_timeout_seconds: 600
+  collective_timeout_seconds: 180
+  heartbeat_interval_seconds: 10
+  actor_offload: true
+  rollout_offload: true
+  replay_cpu_resident: true
+  activation_checkpointing: full
+  fsdp_use_orig_params: true
+evaluation:
+  enabled: true
+  interval_updates: 5
+  episodes_per_variant: 8
+  save_video: false
+checkpoint:
+  enabled: true
+  interval_updates: 5
+  keep_latest: 1
+  atomic: true
+  save_optimizer: true
+  emergency_on_signal: true
